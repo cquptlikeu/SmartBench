@@ -42,11 +42,12 @@ class ModelResponse:
 
 class DebateEngine:
     """
-    Generic multi-model debate engine.
+    Generic multi-model debate engine with optional evidence verification.
 
     Usage:
         factory = PromptFactory(fingerprint)
-        engine = DebateEngine(llm_call_fn, factory)
+        verifier = Verifier(project_path, graph, retriever)  # optional
+        engine = DebateEngine(llm_call_fn, factory, verifier=verifier)
         result = engine.debate(analysis_context, target="Improve performance")
     """
 
@@ -57,6 +58,7 @@ class DebateEngine:
         fingerprint: Optional[ProjectFingerprint] = None,
         max_iterations: int = 2,
         timeout_per_call: int = 60,
+        verifier: Optional[Any] = None,
     ):
         """
         Args:
@@ -65,6 +67,7 @@ class DebateEngine:
             fingerprint: ProjectFingerprint (used to create factory if not provided)
             max_iterations: Maximum debate rounds
             timeout_per_call: Timeout per LLM call in seconds
+            verifier: Optional Verifier for evidence-based claim checking
         """
         self.llm_call = llm_call_fn
         # Fix: operator precedence — 'or ... if ... else' binds as (or ...) if ... else
@@ -76,6 +79,7 @@ class DebateEngine:
             self.factory = None
         self.max_iterations = max_iterations
         self.timeout = timeout_per_call
+        self.verifier = verifier  # NEW: evidence verification layer
 
     def debate(
         self,
@@ -124,10 +128,40 @@ class DebateEngine:
                 total_tokens_used=total_chars // 3,
             )
 
-        # ── Round 2: Critique ─────────────────────────────────────────
+        # ── Round 1.5: Verify Proposer claims ── (NEW)
+        if self.verifier:
+            try:
+                proposals = proposer_json.get("proposals", [])
+                if proposals:
+                    verified_proposals = self.verifier.verify_proposals(proposals)
+                    proposer_json["proposals"] = verified_proposals
+                    # Build human-readable verification summary
+                    verification_summary = self.verifier.build_summary(
+                        verified_proposals
+                    )
+                    log.append({
+                        "role": "verifier",
+                        "type": "proposer_check",
+                        "verification_summary": verification_summary[:500],
+                    })
+                    if on_progress:
+                        on_progress("verifier", {
+                            "type": "proposer_check",
+                            "proposals": verified_proposals,
+                            "summary": verification_summary,
+                        }, None)
+                    total_chars += len(verification_summary)
+            except Exception as e:
+                log.append({"role": "verifier", "error": str(e)})
+                verification_summary = ""
+        else:
+            verification_summary = ""
+
+        # ── Round 2: Critique (with verification context) ─────────────
         critique_prompt = self.factory.build_critique_prompt(
             json.dumps(proposer_json, ensure_ascii=False, indent=2),
             analysis_context,
+            verification_summary=verification_summary,
         )
         critique_raw = self._safe_call(critique_prompt, model_name, role="critique")
         critique_json = self._parse_json(critique_raw)
@@ -137,11 +171,27 @@ class DebateEngine:
         if on_progress:
             on_progress("critique", critique_json, critique_raw)
 
-        # ── Round 3: Judge ────────────────────────────────────────────
+        # ── Round 2.5: Verify Critique claims ── (NEW)
+        if self.verifier and critique_json:
+            try:
+                verified_critique = self.verifier.verify_critique(
+                    critique_json,
+                    proposer_json.get("proposals", []),
+                )
+                critique_json = verified_critique
+                log.append({
+                    "role": "verifier",
+                    "type": "critique_check",
+                })
+            except Exception as e:
+                log.append({"role": "verifier", "error": str(e)})
+
+        # ── Round 3: Judge (with full verification trail) ──────────────
         judge_prompt = self.factory.build_judge_prompt(
             json.dumps(proposer_json, ensure_ascii=False, indent=2),
             json.dumps(critique_json, ensure_ascii=False, indent=2) if critique_json else "{}",
             analysis_context,
+            verification_summary=verification_summary,
         )
         judge_raw = self._safe_call(judge_prompt, model_name, role="judge")
         judge_json = self._parse_json(judge_raw)
@@ -151,13 +201,28 @@ class DebateEngine:
         if on_progress:
             on_progress("judge", judge_json, judge_raw)
 
-        # ── Extract final suggestions ──────────────────────────────────
+        # ── Extract final suggestions with final verification ────────
         final_suggestions = []
         if judge_json:
             final_suggestions = judge_json.get("final_suggestions", [])
+            # Final verification pass on accepted suggestions
+            if self.verifier and final_suggestions:
+                try:
+                    final_suggestions = self.verifier.verify_proposals(
+                        final_suggestions
+                    )
+                except Exception:
+                    pass
         elif proposer_json:
             # Fallback: use proposer suggestions directly if judge fails
             final_suggestions = proposer_json.get("proposals", [])
+            if self.verifier and final_suggestions:
+                try:
+                    final_suggestions = self.verifier.verify_proposals(
+                        final_suggestions
+                    )
+                except Exception:
+                    pass
 
         elapsed = int((time.time() - start_time) * 1000)
 

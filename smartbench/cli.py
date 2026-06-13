@@ -169,11 +169,12 @@ def run_interactive_wizard():
 
     # ── Build code graph ──────────────────────────────────────────────
     console.print("\n[bold]Building code graph...[/bold]")
-    graph = run_phase4_graph(project_path, fingerprint)
+    graph, hybrid_retriever = run_phase4_graph(project_path, fingerprint)
 
     if graph and len(graph.nodes) > 0:
         console.print(f"  [green]OK[/green] {graph.summary()}")
-        run_diagnosis_with_graph(project_path, fingerprint, graph, api_config, user_concern)
+        run_diagnosis_with_graph(project_path, fingerprint, graph, api_config,
+                                  user_concern, hybrid_retriever=hybrid_retriever)
     else:
         console.print("  [yellow]Could not build code graph (no source files found?)[/yellow]")
         run_fallback_analysis(project_path, fingerprint, api_config, user_concern)
@@ -208,9 +209,10 @@ def run_quick_mode(project: Optional[str] = None, concern: Optional[str] = None)
     if not concern:
         concern = "analyze the project for potential issues"
 
-    graph = run_phase4_graph(project_path, fingerprint)
+    graph, hybrid_retriever = run_phase4_graph(project_path, fingerprint)
     if graph:
-        run_diagnosis_with_graph(project_path, fingerprint, graph, api_config, concern)
+        run_diagnosis_with_graph(project_path, fingerprint, graph, api_config,
+                                  concern, hybrid_retriever=hybrid_retriever)
     else:
         run_fallback_analysis(project_path, fingerprint, api_config, concern)
 
@@ -271,8 +273,13 @@ def run_phase1_detection(project_path: str) -> ProjectFingerprint:
     return fp
 
 
-def run_phase4_graph(project_path: str, fingerprint: ProjectFingerprint):
-    """Phase 4: Build code graph — parses primary + secondary languages."""
+def run_phase4_graph(project_path: str, fingerprint: ProjectFingerprint,
+                     build_rag: bool = True):
+    """Phase 4: Build code graph — parses primary + secondary languages.
+
+    Returns:
+        (graph, hybrid_retriever) tuple. hybrid_retriever is None if RAG unavailable.
+    """
     try:
         builder = CodeGraphBuilder(max_files=500)
         all_langs = [fingerprint.primary_language] + fingerprint.secondary_languages
@@ -304,16 +311,49 @@ def run_phase4_graph(project_path: str, fingerprint: ProjectFingerprint):
             breakdown = ", ".join(f"{l}:{c}" for l, c in sorted(lang_counts.items()))
             console.print(f"    [dim]语言分布: {breakdown}[/dim]")
 
-        return main_graph
+        # ── Build RAG vector index (NEW) ──────────────────────────────
+        hybrid_retriever = None
+        if build_rag:
+            try:
+                from smartbench.rag.indexer import IndexPipeline
+                from smartbench.rag.retriever import HybridRetriever
+                from smartbench.rag.embedder import CodeEmbedder
+                from smartbench.rag.store import VectorStore
+
+                indexer = IndexPipeline(project_path, fingerprint)
+
+                with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+                    rag_task = progress.add_task("[yellow]构建 RAG 向量索引...[/yellow]", total=None)
+                    store, rag_embedder = indexer.index_if_needed(main_graph)
+                    progress.remove_task(rag_task)
+
+                chunk_count = store.count()
+                console.print(f"    [green]OK[/green] RAG 向量索引: {chunk_count} 个代码块")
+
+                hybrid_retriever = HybridRetriever(
+                    main_graph, project_path, store, rag_embedder
+                )
+            except ImportError as e:
+                console.print(f"    [yellow]RAG 依赖未安装: {e}[/yellow]")
+                console.print(
+                    "    [dim]安装可选依赖: pip install smartbench[rag] 或"
+                    " pip install chromadb sentence-transformers[/dim]"
+                )
+            except Exception as e:
+                console.print(f"    [yellow]RAG 索引跳过: {e}[/yellow]")
+
+        return main_graph, hybrid_retriever
     except Exception as e:
         console.print(f"  [yellow]代码图构建问题: {e}[/yellow]")
-        return None
+        return None, None
 
 
 def run_diagnosis_with_graph(project_path: str, fingerprint: ProjectFingerprint,
                               graph, api_config: Optional[Dict],
-                              concern: str):
-    """Run the full graph-enhanced diagnosis pipeline."""
+                              concern: str,
+                              hybrid_retriever=None,
+                              enable_verify: bool = True):
+    """Run the full graph-enhanced diagnosis pipeline with RAG + verification."""
     if not api_config:
         console.print("[yellow]No LLM configured — showing graph stats only[/yellow]")
         _display_graph_stats(graph, fingerprint)
@@ -351,25 +391,58 @@ def run_diagnosis_with_graph(project_path: str, fingerprint: ProjectFingerprint,
         if reasoning:
             console.print(f"  [dim]{reasoning}[/dim]")
 
-    # Graph-enhanced context retrieval
+    # Hybrid context retrieval (graph + RAG)
     retriever = GraphRetriever(graph, project_path, max_tokens_estimate=4000)
-    code_context = retriever.retrieve(concern)
+    if hybrid_retriever:
+        code_context = hybrid_retriever.retrieve(concern)
+    else:
+        code_context = retriever.retrieve(concern)
 
     analysis_context = factory.build_analysis_context(
         code_context=code_context,
         user_symptoms=concern,
     )
 
-    # Phase 5: Multi-agent debate
+    # ── Create Verifier (NEW) ─────────────────────────────────────────
+    verifier = None
+    if enable_verify:
+        try:
+            from smartbench.verifier.verifier import Verifier
+            verifier = Verifier(
+                project_path=project_path,
+                graph=graph,
+                graph_retriever=retriever,
+                hybrid_retriever=hybrid_retriever,
+            )
+        except ImportError as e:
+            console.print(f"  [dim]验证模块未加载: {e}[/dim]")
+        except Exception as e:
+            console.print(f"  [yellow]验证器初始化跳过: {e}[/yellow]")
+
+    # Phase 5: Multi-agent debate with verification
     console.print("\n[bold]多 Agent 辩论中...[/bold]\n")
+    if verifier:
+        console.print("  [dim]证据核查已启用[/dim]")
 
     # Build a single role-aware LLM caller: fn(prompt, role="proposer")
     def llm_fn(prompt: str, role: str = "") -> str:
         return _call_llm(api_config, prompt, role=role) or ""
 
-    debate_engine = DebateEngine(llm_fn, prompt_factory=factory)
+    debate_engine = DebateEngine(llm_fn, prompt_factory=factory, verifier=verifier)
     result = debate_engine.debate(analysis_context, target=concern,
                                   on_progress=_show_debate_round)
+
+    # Show verification stats if available
+    if verifier:
+        try:
+            stats = verifier.get_verification_stats(result.final_suggestions)
+            console.print(
+                f"  [dim]验证: {stats['verified']} 通过, "
+                f"{stats['partial']} 部分, {stats['hallucinated']} 不存在, "
+                f"总体得分: {stats['overall_score']:.0%}[/dim]"
+            )
+        except Exception:
+            pass
 
     _display_diagnosis_results(result, fingerprint, graph)
 
@@ -426,6 +499,43 @@ def _show_debate_round(role: str, parsed_json: Optional[Dict], raw_text: str):
         "judge": ("Judge（最终仲裁者）", "green"),
     }
     display_name, color = role_names.get(role, (role, "white"))
+
+    if role == "verifier":
+        # Verification round display
+        vtype = parsed_json.get("type", "") if parsed_json else ""
+        proposals = parsed_json.get("proposals", []) if parsed_json else []
+        summary = parsed_json.get("summary", "") if parsed_json else ""
+
+        if vtype == "proposer_check":
+            body = ""
+            for p in proposals:
+                if not isinstance(p, dict):
+                    continue
+                verif = p.get("__verification", {})
+                verdict = verif.get("verdict", "unverifiable")
+                score = verif.get("verification_score", 0)
+                title = p.get("title", "?")
+
+                if verdict == "verified":
+                    icon = "  [green][✓ 已验证][/green]"
+                elif verdict == "partial":
+                    icon = "  [yellow][⚠ 部分匹配][/yellow]"
+                else:
+                    icon = "  [red][✗ 不存在][/red]"
+
+                body += f"{icon} [bold]{title}[/bold] (得分: {score:.0%})\n"
+                for loc in verif.get("hallucinated_locations", []):
+                    body += f"    [red]✗ 文件不存在: {loc}[/red]\n"
+                for loc in verif.get("verified_locations", []):
+                    body += f"    [dim]✓ {loc}[/dim]\n"
+                for loc in verif.get("partial_locations", []):
+                    body += f"    [yellow]⚠ {loc}[/yellow]\n"
+
+            title_text = "Verifier（事实核查 - Proposer 输出）"
+            console.print(Panel(body.strip() or summary[:500],
+                                title=f"[blue]{title_text}[/blue]",
+                                border_style="blue"))
+        return
 
     if not parsed_json:
         console.print(Panel(

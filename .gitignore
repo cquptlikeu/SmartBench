@@ -26,6 +26,10 @@ build/
 # Claude Code
 .claude/
 
+# SmartBench runtime cache
+.smartbench/
+test_chroma/
+
 # Data (runtime)
 data/cache/
 data/regression/

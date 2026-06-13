@@ -163,7 +163,7 @@ class PromptFactory:
 {lang_guidance}
 
 ## 输出要求
-返回 JSON 对象，包含你的分析和方案：
+返回 JSON 对象，包含你的分析和方案。**每条方案必须附带 evidence_claims（可验证证据声明）。**
 ```json
 {{
   "analysis": {{
@@ -173,10 +173,27 @@ class PromptFactory:
   "proposals": [
     {{
       "title": "方案标题（中文，15字以内）",
-      "location": "文件路径:行号",
+      "location": "文件路径:行号（必须是真实存在的文件）",
       "problem": "具体问题描述（中文，150字以内）",
       "solution": "具体修复方案，可用伪代码说明",
       "implementation_steps": ["步骤1（中文）", "步骤2（中文）", "步骤3（中文）"],
+      "evidence_claims": [
+        {{
+          "type": "file_location",
+          "target": "frontend/src/main.tsx:10",
+          "description": "此处存在你描述的问题"
+        }},
+        {{
+          "type": "call_chain",
+          "target": "handleRequest -> processData -> saveResult",
+          "description": "该问题涉及的调用链"
+        }},
+        {{
+          "type": "code_pattern",
+          "target": "缺少错误处理的异步调用",
+          "description": "具体代码模式问题"
+        }}
+      ],
       "expected_improvement": "预期改进效果（中文，如：延迟降低约15%）",
       "priority": 1至5,
       "risk_level": "low/medium/high"
@@ -184,28 +201,43 @@ class PromptFactory:
   ]
 }}
 ```
+**重要**：evidence_claims 是必须提供的！每条方案至少提供 2 个 evidence_claims。file_location 的 target 字段必须是项目中真实的相对路径和行号（如 `backend/app/api/events.py:42`），不要凭空编造。
 只返回 JSON，不要其他文字。"""
 
-    def build_critique_prompt(self, proposals_json: str, analysis_context: str) -> str:
+    def build_critique_prompt(self, proposals_json: str, analysis_context: str,
+                              verification_summary: str = "") -> str:
         """生成 Critique（交叉审查者）Prompt。"""
         lang = self.fp.primary_language.value
+
+        verif_section = ""
+        if verification_summary:
+            verif_section = f"""
+## 自动事实核查结果
+以下为 Proposer 方案中声明的文件和代码位置的自动验证结果。**标记为 [✗ 不存在] 的文件或调用链是 Proposer 编造的，在审查中必须明确指出并降低其可信度。**
+{verification_summary}
+
+"""
 
         return f"""你是一位严谨的 {lang} 软件架构审查专家（Critique / 交叉审查者）。
 请用中文输出所有审查意见。
 
 你的任务：审查 Proposer 提出的方案，从正确性、安全性、可行性角度评估。
+**特别提示**：请仔细阅读下方的「自动事实核查结果」。如果某方案引用了不存在的文件（标记 [✗ 不存在]），
+在裁决中必须明确指出这是虚假引用。
 
 ## 项目上下文
 {analysis_context}
 
+{verif_section}
 ## Proposer 的方案
 {proposals_json}
 
 ## 审查维度
 1. **正确性**：这个修复是否会引入新的 Bug？
-2. **安全性**：线程安全、数据一致性、异常处理是否考虑周全？
-3. **可行性**：在当前代码库中实施这个方案的现实程度如何？
-4. **副作用**：改动可能导致什么其他问题？
+2. **真实性**：方案引用的文件和代码位置是否真实存在？（参考上方的自动核查结果）
+3. **安全性**：线程安全、数据一致性、异常处理是否考虑周全？
+4. **可行性**：在当前代码库中实施这个方案的现实程度如何？
+5. **副作用**：改动可能导致什么其他问题？
 
 ## 输出格式
 返回 JSON（请用中文）：
@@ -216,6 +248,7 @@ class PromptFactory:
       "proposal_title": "对应的方案标题",
       "verdict": "accept（接受） / modify（需修改） / reject（拒绝）",
       "concerns": ["需要关注的问题1（中文）", "问题2（中文）"],
+      "evidence_issues": ["文件不存在: xxx", "行号超出范围: yyy"],
       "suggested_modifications": "如果需要修改，给出具体修改建议（中文）"
     }}
   ],
@@ -225,24 +258,38 @@ class PromptFactory:
 只返回 JSON，不要其他文字。"""
 
     def build_judge_prompt(self, proposals_json: str, critiques_json: str,
-                            analysis_context: str) -> str:
+                            analysis_context: str,
+                            verification_summary: str = "") -> str:
         """生成 Judge（最终仲裁者）Prompt。"""
         lang = self.fp.primary_language.value
+
+        verif_section = ""
+        if verification_summary:
+            verif_section = f"""
+## 事实核查证据链
+以下为自动验证结果，标注了哪些声明有真实代码支撑、哪些是虚构的。
+{verification_summary}
+
+"""
 
         return f"""你是一位 {lang} 技术负责人（Judge / 最终仲裁者），需要做出最终决策。
 请用中文输出最终诊断报告。
 
+**重要提示**：请优先采纳有真实代码支撑的方案。对于自动核查结果中标记为 [✗ 不存在] 的方案，
+除非 Critique 提供了额外验证，否则应降低其权重或直接拒绝。
+
 ## 项目上下文
 {analysis_context}
 
-## Proposer 的方案
+{verif_section}
+## Proposer 的方案（含事实核查标注）
 {proposals_json}
 
-## Critique 的审查意见
+## Critique 的审查意见（含证据核查）
 {critiques_json}
 
 ## 你的任务
-综合双方观点，产出一份最终的可执行诊断报告。
+综合双方观点和事实核查证据链，产出一份最终的可执行诊断报告。
 
 返回 JSON（请用中文）：
 ```json
@@ -254,16 +301,74 @@ class PromptFactory:
       "title": "最终建议标题（中文）",
       "description": "问题分析 + 解决方案描述（中文）",
       "implementation": "具体实施步骤（中文）",
-      "location": "文件:行号（如适用）",
+      "location": "文件:行号（如适用，确保引用真实存在的文件）",
+      "evidence_status": "该建议的证据验证状态",
       "priority": 1至5,
       "risk_level": "low/medium/high",
       "consensus": "high（高共识） / medium（中等） / low（低共识）"
+    }}
+  ],
+  "rejected_proposals": [
+    {{
+      "title": "被拒绝的建议标题",
+      "reason": "拒绝原因（如：引用的文件不存在、调用链无法验证等）"
     }}
   ],
   "risk_summary": "实施过程中需要注意的顶层风险（中文）"
 }}
 ```
 只返回 JSON，不要其他文字。"""
+
+    # ── 核查结果格式化 ─────────────────────────────────────────────
+
+    def build_verification_summary(self, proposals: list) -> str:
+        """
+        构建人类可读的核查结果摘要（中文），用于注入下一轮 Prompt。
+
+        Args:
+            proposals: 已添加 __verification 字段的方案列表
+
+        Returns:
+            格式化的 Markdown 字符串
+        """
+        parts = ["\n## 事实核查结果（自动验证）\n"]
+
+        for p in proposals:
+            if not isinstance(p, dict):
+                continue
+            verif = p.get("__verification", {})
+            if not verif:
+                continue
+
+            score = verif.get("verification_score", 0)
+            verdict = verif.get("verdict", "unknown")
+            title = p.get("title", "?")
+
+            if verdict == "verified":
+                parts.append(f"- [✓ 已验证] **{title}** (得分: {score:.0%})")
+                for loc in verif.get("verified_locations", []):
+                    parts.append(f"  - 文件已验证: `{loc}`")
+            elif verdict == "partial":
+                parts.append(f"- [⚠ 部分匹配] **{title}** (得分: {score:.0%})")
+                for loc in verif.get("partial_locations", []):
+                    parts.append(f"  - 路径偏离: {loc}")
+                for loc in verif.get("hallucinated_locations", []):
+                    parts.append(f"  - ✗ 不存在: `{loc}`")
+            elif verdict == "hallucinated":
+                parts.append(f"- [✗ 不存在] **{title}** (得分: {score:.0%})")
+                for loc in verif.get("hallucinated_locations", []):
+                    parts.append(f"  - ✗ 文件不存在: `{loc}`")
+            else:
+                parts.append(f"- [? 无法验证] **{title}**")
+
+            for flag in verif.get("flags", []):
+                parts.append(f"  - {flag}")
+
+        parts.append(
+            "\n**注意**：以上核查结果由代码图 + 磁盘扫描自动生成，不含 LLM 调用。"
+            "请据此调整审查判断。\n"
+        )
+        return "\n".join(parts)
 
     # ── 语言专项诊断指导 ─────────────────────────────────────────────
 
