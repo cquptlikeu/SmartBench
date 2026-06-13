@@ -363,8 +363,9 @@ def run_diagnosis_with_graph(project_path: str, fingerprint: ProjectFingerprint,
     # Phase 5: Multi-agent debate
     console.print("\n[bold]多 Agent 辩论中...[/bold]\n")
 
-    def llm_fn(prompt: str) -> str:
-        return _call_llm(api_config, prompt) or ""
+    # Build a single role-aware LLM caller: fn(prompt, role="proposer")
+    def llm_fn(prompt: str, role: str = "") -> str:
+        return _call_llm(api_config, prompt, role=role) or ""
 
     debate_engine = DebateEngine(llm_fn, prompt_factory=factory)
     result = debate_engine.debate(analysis_context, target=concern,
@@ -406,8 +407,9 @@ def run_fallback_analysis(project_path: str, fingerprint: ProjectFingerprint,
         user_symptoms=concern,
     )
 
-    def llm_fn(prompt: str) -> str:
-        return _call_llm(api_config, prompt) or ""
+    # Build a single role-aware LLM caller: fn(prompt, role="proposer")
+    def llm_fn(prompt: str, role: str = "") -> str:
+        return _call_llm(api_config, prompt, role=role) or ""
 
     debate_engine = DebateEngine(llm_fn, prompt_factory=factory)
     result = debate_engine.debate(analysis_context, target=concern,
@@ -713,14 +715,11 @@ def masked_input(prompt_text: str) -> str:
 
 
 def configure_api_keys() -> Optional[Dict[str, str]]:
-    """Interactive model + API key configuration.
+    """Interactive model + API key configuration — role-aware.
 
-    User only needs to provide:
-      1. Model name (e.g. deepseek-chat, gpt-4o, claude-sonnet-4)
-      2. API key (masked input with * echo)
-
-    Everything else (provider, base URL) is auto-detected from the
-    built-in PROVIDER_REGISTRY.
+    User chooses:
+      [1] One model for all three roles (convenient)
+      [2] Different models for Proposer / Critique / Judge (credible debate)
 
     Keys stored in memory only — never persisted to disk.
     """
@@ -728,7 +727,9 @@ def configure_api_keys() -> Optional[Dict[str, str]]:
 
     console.print("\n  [dim]Keys stored in memory only — restart terminal to reconfigure.[/dim]")
 
-    # Check environment variables first
+    # ================================================================
+    # Step A: Environment variable quick-load
+    # ================================================================
     env_providers = {
         "deepseek": os.environ.get("DEEPSEEK_API_KEY", ""),
         "openai": os.environ.get("OPENAI_API_KEY", ""),
@@ -739,69 +740,107 @@ def configure_api_keys() -> Optional[Dict[str, str]]:
         "qwen": os.environ.get("DASHSCOPE_API_KEY", ""),
     }
 
+    env_count = 0
     for provider, key in env_providers.items():
         if key:
+            env_count += 1
             info = PROVIDER_REGISTRY.get(provider, {})
             display = info.get("display", provider)
             if Confirm.ask(f"  Use ${provider.upper()}_API_KEY from env? ({display})", default=True):
                 models_list.append({
                     "provider": provider,
-                    "model": "auto",  # will be filled by _call_llm
+                    "model": "auto",
                     "api_key": key,
                     "base_url": info.get("base_url", ""),
+                    "role": "all",  # will be refined below if needed
                 })
                 console.print(f"    [green]OK[/green] {display}")
 
-    # Manual entry
-    console.print(f"\n  [bold]Configure your models:[/bold]")
-    console.print(f"  [dim]One model is enough — debate engine reuses it for all three roles.[/dim]")
-    console.print(f"  [dim]Examples: deepseek-chat | gpt-4o | claude-sonnet-4 | glm-4[/dim]")
-    console.print(f"")
+    if len(models_list) >= 3:
+        # Already have 3+ models from env — assign to roles
+        ROLE_NAMES_CN = ["Proposer（方案提出者）", "Critique（交叉审查者）", "Judge（最终仲裁者）"]
+        for i, m in enumerate(models_list[:3]):
+            role_key = ["proposer", "critique", "judge"][i]
+            m["role"] = role_key
+            console.print(f"    [dim]{ROLE_NAMES_CN[i]} → {m.get('model', 'auto')}[/dim]")
 
-    while True:
-        if models_list:
-            # Already added at least one model — user can stop or add more
-            model = Prompt.ask(
-                f"  Model name ([green]{len(models_list)} configured[/green], Enter to finish)",
-                default="",
-            ).strip()
+    # ================================================================
+    # Step B: Choose config mode
+    # ================================================================
+    console.print(f"\n  [bold]How to configure?[/bold]")
+    console.print(f"  [1] One model — all three roles share it (convenient)")
+    console.print(f"  [2] Three models — Proposer / Critique / Judge each use a different model (credible debate)")
+
+    choice = Prompt.ask("  Choice", default="1", choices=["1", "2"]).strip()
+
+    # ================================================================
+    # Step C: Collect model(s)
+    # ================================================================
+    ROLE_KEYS = ["proposer", "critique", "judge"]
+    ROLE_NAMES_CN = ["Proposer（方案提出者）", "Critique（交叉审查者）", "Judge（最终仲裁者）"]
+    ROLE_COLORS = ["cyan", "yellow", "green"]
+
+    if choice == "1":
+        # ── One model for all ──────────────────────────────────────
+        console.print(f"\n  [bold]Configure the model for all three roles:[/bold]")
+        console.print(f"  [dim]Examples: deepseek-chat | gpt-4o | claude-sonnet-4[/dim]")
+
+        model = _prompt_single_model()
+        if model:
+            model["role"] = "all"
+            models_list.append(model)
+            console.print(f"    [green]OK[/green] Proposer / Critique / Judge 共用 [{model['model']}]")
+    else:
+        # ── Three different models ─────────────────────────────────
+        console.print(f"\n  [bold]Configure one model per role:[/bold]")
+        console.print(f"  [dim]For maximum credibility, use different models for each role.[/dim]")
+
+        for i, (role_key, role_name, role_color) in enumerate(zip(ROLE_KEYS, ROLE_NAMES_CN, ROLE_COLORS)):
+            console.print(f"\n  [{role_color}]── {role_name} ──[/{role_color}]")
+            model = _prompt_single_model()
             if not model:
-                break
-        else:
-            model = Prompt.ask("  Model name", default="").strip()
-            if not model:
-                console.print("    [yellow]At least one model is required.[/yellow]")
+                console.print("    [yellow]Skipped — this role will use the first available model[/yellow]")
                 continue
-
-        provider_key, base_url, display = _detect_provider(model)
-
-        # Confirm auto-detection, allow override
-        console.print(f"    [dim]Provider: {display} → {base_url}[/dim]")
-        override = Prompt.ask(f"    Base URL (Enter to confirm)", default="").strip()
-        if override:
-            base_url = override
-
-        key = masked_input(f"    API key for {model}")
-        if not key:
-            console.print("    [yellow]Skipped (no key)[/yellow]")
-            continue
-
-        models_list.append({
-            "provider": provider_key,
-            "model": model,
-            "api_key": key,
-            "base_url": base_url,
-        })
-        console.print(f"    [green]OK[/green] {model} ({display}) — {len(models_list)} model(s) total")
+            model["role"] = role_key
+            models_list.append(model)
 
     if not models_list:
         return None
 
     console.print(f"\n  [green]Ready![/green] {len(models_list)} model(s) configured.")
-    if len(models_list) == 1:
-        console.print(f"  [dim]The debate Proposer/Critique/Judge will all use {models_list[0]['model']}.[/dim]")
+    if any(m.get("role") == "all" for m in models_list):
+        console.print(f"  [dim]One model → all three debate roles share it.[/dim]")
+    else:
+        for m in models_list:
+            role = m.get("role", "?")
+            role_display = dict(zip(ROLE_KEYS, ROLE_NAMES_CN)).get(role, role)
+            console.print(f"  [dim]{role_display} → {m['model']} ({m.get('provider', '?')})[/dim]")
 
     return {"models": models_list}
+
+
+def _prompt_single_model() -> Optional[Dict]:
+    """Prompt for a single model name + API key. Returns model dict or None."""
+    model = Prompt.ask("    Model name", default="").strip()
+    if not model:
+        return None
+
+    provider_key, base_url, display = _detect_provider(model)
+    console.print(f"      [dim]Provider: {display} → {base_url}[/dim]")
+    override = Prompt.ask("      Base URL (Enter to confirm)", default="").strip()
+    if override:
+        base_url = override
+
+    key = masked_input(f"      API key for {model}")
+    if not key:
+        return None
+
+    return {
+        "provider": provider_key,
+        "model": model,
+        "api_key": key,
+        "base_url": base_url,
+    }
 
 
 def _load_api_keys_from_env() -> Optional[Dict[str, str]]:
@@ -826,44 +865,53 @@ def _load_api_keys_from_env() -> Optional[Dict[str, str]]:
                 "api_key": key,
                 "base_url": info.get("base_url", ""),
             })
+
+    # Assign roles: if 3+ models, one per role; otherwise "all"
+    if len(models) >= 3:
+        for i, role in enumerate(["proposer", "critique", "judge"]):
+            models[i]["role"] = role
+    else:
+        for m in models:
+            m["role"] = "all"
+
     return {"models": models} if models else None
 
 
 def _call_llm(api_config: Dict, prompt: str,
               system: str = "你是一位资深软件工程师。请用中文回复。只返回要求的 JSON，不要其他内容。",
-              prefer_provider: str = "") -> str:
+              role: str = "") -> str:
     """Call an LLM via OpenAI-compatible API.
 
     Args:
-        api_config: {"models": [{"provider":..., "model":..., "api_key":..., "base_url":...}, ...]}
+        api_config: {"models": [{"provider":..., "model":..., "api_key":..., "base_url":..., "role":...}, ...]}
         prompt: The user prompt
         system: System prompt
-        prefer_provider: Try this provider first (e.g. "deepseek"), then fall back to others
+        role: "proposer" / "critique" / "judge" — routes to the correct model in the config
     """
     import urllib.request
     import urllib.error
 
     models = api_config.get("models", [])
 
-    # Fallback: old format {provider: key, ...}
+    # Fallback: old format conversion
     if not models and isinstance(api_config, dict):
-        # Convert old format to new
         for provider in ["deepseek", "openai", "anthropic", "glm", "doubao"]:
             key = api_config.get(provider, "")
             if key:
                 info = PROVIDER_REGISTRY.get(provider, {})
                 models.append({
-                    "provider": provider,
-                    "model": "auto",
-                    "api_key": key,
-                    "base_url": info.get("base_url", ""),
+                    "provider": provider, "model": "auto",
+                    "api_key": key, "base_url": info.get("base_url", ""),
+                    "role": "all",
                 })
 
     if not models:
         return ""
 
-    # Order: prefer_provider first, then rest
-    ordered = sorted(models, key=lambda m: 0 if m["provider"] == prefer_provider else 1)
+    # Route by role: prefer model assigned to this role, fallback to "all", then anything
+    ordered = sorted(models, key=lambda m: (
+        0 if m.get("role") == role else (1 if m.get("role") == "all" else 2)
+    ))
 
     for m in ordered:
         api_key = m.get("api_key", "")

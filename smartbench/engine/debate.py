@@ -108,7 +108,7 @@ class DebateEngine:
         proposer_prompt = self.factory.build_proposer_prompt(
             analysis_context, target,
         )
-        proposer_raw = self._safe_call(proposer_prompt, model_name)
+        proposer_raw = self._safe_call(proposer_prompt, model_name, role="proposer")
         proposer_json = self._parse_json(proposer_raw)
         total_chars += len(proposer_prompt) + len(proposer_raw or "")
         log.append({"role": "proposer", "input": proposer_prompt[:500],
@@ -129,7 +129,7 @@ class DebateEngine:
             json.dumps(proposer_json, ensure_ascii=False, indent=2),
             analysis_context,
         )
-        critique_raw = self._safe_call(critique_prompt, model_name)
+        critique_raw = self._safe_call(critique_prompt, model_name, role="critique")
         critique_json = self._parse_json(critique_raw)
         total_chars += len(critique_prompt) + len(critique_raw or "")
         log.append({"role": "critique", "input": critique_prompt[:500],
@@ -143,7 +143,7 @@ class DebateEngine:
             json.dumps(critique_json, ensure_ascii=False, indent=2) if critique_json else "{}",
             analysis_context,
         )
-        judge_raw = self._safe_call(judge_prompt, model_name)
+        judge_raw = self._safe_call(judge_prompt, model_name, role="judge")
         judge_json = self._parse_json(judge_raw)
         total_chars += len(judge_prompt) + len(judge_raw or "")
         log.append({"role": "judge", "input": judge_prompt[:500],
@@ -172,9 +172,14 @@ class DebateEngine:
 
     # ── Helpers ───────────────────────────────────────────────────────
 
-    def _safe_call(self, prompt: str, model_name: str) -> str:
-        """Call LLM with timeout protection."""
+    def _safe_call(self, prompt: str, model_name: str, role: str = "") -> str:
+        """Call LLM with timeout protection. Passes role for model routing."""
         try:
+            # Try to pass role to the callable (role-aware routing)
+            import inspect
+            sig = inspect.signature(self.llm_call)
+            if len(sig.parameters) >= 2:
+                return self.llm_call(prompt, role)
             return self.llm_call(prompt)
         except Exception as e:
             return json.dumps({"error": str(e)})
