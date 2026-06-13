@@ -1,84 +1,87 @@
 """
-Pre-built prompt template strings — the static building blocks.
+预构建的 Prompt 模板字符串 — 静态构建块。
 
-Factory methods in factory.py inject dynamic context (language, framework,
-metrics, code snippets) into these templates at runtime.
+factory.py 中的 Factory 方法在运行时将动态上下文（语言、框架、
+指标、代码片段）注入这些模板。
 """
 
-# ── Phase 2: System analysis (LLM reads README + fingerprint) ─────────
+# ── 阶段 2：系统分析（LLM 读取 README + 指纹） ──────────────────────
 
-SYSTEM_ANALYSIS_TEMPLATE = """You are a senior software architect analyzing an unfamiliar codebase.
+SYSTEM_ANALYSIS_TEMPLATE = """你是一位资深软件架构师，正在分析一个陌生代码仓库。请用中文回复。
 
-## Deterministic Signals
+## 确定性信号
 {project_signals}
 
-## README Content
+## README 内容
 {readme_content}
 
-## Your Task
+## 你的任务
 {task_description}
 """
 
-# ── Phase 3: Diagnostic strategy selection ────────────────────────────
+# ── 阶段 3：诊断策略选择 ────────────────────────────────────────────
 
-DIAGNOSTIC_STRATEGY_TEMPLATE = """You are selecting a diagnostic strategy for this project.
+DIAGNOSTIC_STRATEGY_TEMPLATE = """你正在为这个项目选择诊断策略。请用中文回复。
 
-## Project Profile
+## 项目概况
 {project_profile}
 
-## User's Concern
+## 用户关心的问题
 {user_concern}
 
-## Available Strategies
+## 可选策略
 {strategy_list}
 
-## Your Task
+## 你的任务
 {task_description}
 """
 
-# ── Phase 5: Debate engine ────────────────────────────────────────────
+# ── 阶段 5：辩论引擎 ────────────────────────────────────────────────
 
-PROPOSER_TEMPLATE = """You are an expert {language} {project_type} diagnostics specialist (Proposer).
+PROPOSER_TEMPLATE = """你是一位 {language} {project_type} 诊断专家（Proposer / 方案提出者）。
+请用中文输出。
 
-## Project Context
+## 项目上下文
 {analysis_context}
 
-## Objective
+## 目标
 {target_improvement}
 
-## Language-Specific Guidance
+## 语言专项指导
 {language_guidance}
 
-## Output Format
+## 输出格式
 {output_format}
 """
 
-CRITIQUE_TEMPLATE = """You are a rigorous {language} software architect (Critique).
+CRITIQUE_TEMPLATE = """你是一位严谨的 {language} 软件架构审查专家（Critique / 交叉审查者）。
+请用中文输出。
 
-## Project Context
+## 项目上下文
 {analysis_context}
 
-## Proposer's Suggestions
+## Proposer 的方案
 {proposals}
 
-## Review Dimensions
+## 审查维度
 {review_dimensions}
 
-## Output Format
+## 输出格式
 {output_format}
 """
 
-JUDGE_TEMPLATE = """You are a {language} engineering lead (Judge).
+JUDGE_TEMPLATE = """你是一位 {language} 技术负责人（Judge / 最终仲裁者）。
+请用中文输出最终诊断报告。
 
-## Project Context
+## 项目上下文
 {analysis_context}
 
-## Proposer's Suggestions
+## Proposer 的方案
 {proposals}
 
-## Critique Feedback
+## Critique 的审查意见
 {critiques}
 
-## Output Format
+## 输出格式
 {output_format}
 """

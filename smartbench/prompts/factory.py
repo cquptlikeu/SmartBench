@@ -1,8 +1,7 @@
 """
-PromptFactory — builds all prompts dynamically from ProjectFingerprint.
+PromptFactory — 根据项目指纹动态生成所有 Prompt（全中文）。
 
-Every prompt is assembled at runtime from the fingerprint, not hardcoded.
-This is the key architectural fix: "Raft KV" never appears in engine code.
+所有 Prompt 在运行时从 ProjectFingerprint 组装，零硬编码假设。
 """
 
 from typing import Optional, List, Dict, Any
@@ -10,348 +9,345 @@ from smartbench.detector.fingerprint import ProjectFingerprint, Language
 
 
 class PromptFactory:
-    """
-    Generates all LLM prompts dynamically based on ProjectFingerprint.
-
-    Usage:
-        fp = ProjectScanner(path).scan()
-        factory = PromptFactory(fp)
-        analysis_prompt = factory.build_analysis_prompt(metrics, logs)
-        strategy_prompt = factory.build_strategy_prompt(user_concern)
-    """
+    """根据 ProjectFingerprint 动态生成所有 LLM Prompt。"""
 
     def __init__(self, fingerprint: ProjectFingerprint):
         self.fp = fingerprint
 
-    # ── Phase 2: Project Understanding ─────────────────────────────────
+    # ── 阶段 2：项目理解 ──────────────────────────────────────────────
 
     def build_project_understanding_prompt(self, readme_content: str = "") -> str:
-        """Ask LLM to understand the project from README + fingerprint signals."""
+        """让 LLM 通过 README + 指纹信息理解项目。"""
         lang = self.fp.primary_language.value
         fw = self.fp.framework.value
         ptype = self.fp.project_type.value
 
-        base = f"""You are a senior software architect analyzing an unfamiliar codebase.
+        base = f"""你是一位资深软件架构师，正在分析一个陌生代码仓库。请用中文回复。
 
-## Deterministic Signals (from file-system scan)
-- **Primary language**: {lang} (confidence: {self.fp.language_confidence:.0%})
-- **Secondary languages**: {[l.value for l in self.fp.secondary_languages] or 'none'}
-- **Framework**: {fw} (confidence: {self.fp.framework_confidence:.0%})
-- **Project type**: {ptype}
-- **Build system**: {self.fp.build_system or 'unknown'}
-- **Source files**: {self.fp.source_files} (est. ~{self.fp.lines_of_code_estimate:,} LOC)
-- **Entry points**: {', '.join(self.fp.entry_points[:5]) or 'none detected'}
-- **Dependencies**: {', '.join(self.fp.dependencies[:20]) or 'none detected'}
+## 确定性信号（来自文件系统扫描）
+- **主要语言**：{lang}（置信度：{self.fp.language_confidence:.0%}）
+- **次要语言**：{[l.value for l in self.fp.secondary_languages] or '无'}
+- **框架**：{fw}（置信度：{self.fp.framework_confidence:.0%}）
+- **项目类型**：{ptype}
+- **构建系统**：{self.fp.build_system or '未知'}
+- **源文件**：{self.fp.source_files} 个（预估约 {self.fp.lines_of_code_estimate:,} 行）
+- **入口文件**：{', '.join(self.fp.entry_points[:5]) or '未检测到'}
+- **依赖项**：{', '.join(self.fp.dependencies[:20]) or '未检测到'}
 
-## Git Signals
-- **Is git repo**: {self.fp.is_git_repo}
-- **Recent commits**: {self.fp.recent_commit_count}
-- **Hot files** (recently changed): {', '.join(self.fp.hot_files[:10]) or 'none'}"""
+## Git 信息
+- **是否 Git 仓库**：{self.fp.is_git_repo}
+- **最近提交数**：{self.fp.recent_commit_count}
+- **近期变更的热点文件**：{', '.join(self.fp.hot_files[:10]) or '无'}"""
 
         if readme_content:
             base += f"""
 
-## README Content
+## README 内容
 {readme_content[:4000]}"""
 
         base += """
 
-## Your Task
-Based on the signals above, provide a concise analysis in JSON format:
+## 你的任务
+基于以上信息，给出简洁的项目分析。请用中文输出 JSON：
 ```json
 {
-  "project_summary": "1-2 sentence summary of what this project does",
-  "primary_domain": "web_service / database / distributed_system / cli_tool / ...",
-  "key_concerns": ["concern1", "concern2", "concern3"],
-  "suggested_diagnostic_focus": "what diagnostic dimensions matter most (performance/correctness/security/architecture)",
-  "additional_context_needed": "what else you'd want to know before diagnosing (short answer or 'none')"
+  "project_summary": "用1-2句话概括这个项目是做什么的",
+  "primary_domain": "web_service / database / distributed_system / cli_tool / desktop_app / ...",
+  "key_concerns": ["需要关注的问题1", "问题2", "问题3"],
+  "suggested_diagnostic_focus": "从 性能/正确性/安全性/架构 中选择最应关注的维度",
+  "additional_context_needed": "诊断前还需要了解什么（没有则填'无'）"
 }
 ```
-Return ONLY the JSON, no other text."""
+只返回 JSON，不要其他文字。"""
 
         return base
 
-    # ── Phase 3: Strategy Selection ────────────────────────────────────
+    # ── 阶段 3：策略选择 ──────────────────────────────────────────────
 
     def build_strategy_prompt(self, user_concern: str, available_strategies: List[Dict]) -> str:
-        """Ask LLM to select and parameterize a diagnostic strategy."""
+        """让 LLM 选择并参数化诊断策略。"""
         lang = self.fp.primary_language.value
         fw = self.fp.framework.value
 
         strategy_list = "\n".join(
-            f"- **{s['name']}**: {s['description']} (tools: {', '.join(s.get('tools', []))})"
+            f"- **{s['name']}**：{s['description']}（工具：{', '.join(s.get('tools', []))}）"
             for s in available_strategies
         )
 
-        return f"""You are selecting a diagnostic strategy for a {lang} {fw} project.
+        return f"""你正在为一个 {lang} {fw} 项目选择诊断策略。请用中文回复。
 
-## Project
-- Language: {lang}
-- Framework: {fw}
-- Type: {self.fp.project_type.value}
-- Est. size: {self.fp.source_files} files, ~{self.fp.lines_of_code_estimate:,} LOC
+## 项目概况
+- 语言：{lang}
+- 框架：{fw}
+- 类型：{self.fp.project_type.value}
+- 规模：{self.fp.source_files} 个文件，约 {self.fp.lines_of_code_estimate:,} 行代码
 
-## User's Concern
+## 用户关心的内容
 {user_concern}
 
-## Available Strategies (pre-validated diagnostic templates)
+## 可选策略（已验证的诊断模板）
 {strategy_list}
 
-## Your Task
-Select the BEST strategy and parameterize it. Return JSON:
+## 你的任务
+选择最佳策略并参数化。请用中文输出 JSON：
 ```json
 {{
-  "selected_strategy": "strategy_name",
-  "confidence": 0.0_to_1.0,
-  "reasoning": "why this strategy fits (1 sentence)",
+  "selected_strategy": "策略名称",
+  "confidence": 0.0到1.0,
+  "reasoning": "为什么这个策略最合适（一句话，中文）",
   "parameter_overrides": {{
-    "focus_areas": ["area1"],
-    "exclude_patterns": ["pattern1"],
+    "focus_areas": ["关注领域1"],
+    "exclude_patterns": ["排除模式1"],
     "custom_thresholds": {{}}
   }},
-  "alternative_strategies": ["backup1"],
+  "alternative_strategies": ["备选策略1"],
   "estimated_duration_minutes": 5
 }}
 ```
-Return ONLY the JSON."""
+只返回 JSON，不要其他文字。"""
 
-    # ── Phase 5: Multi-Agent Debate ────────────────────────────────────
+    # ── 阶段 5：多 Agent 辩论 ─────────────────────────────────────────
 
     def build_analysis_context(self, metrics: Optional[Dict] = None,
                                 logs: str = "", error_logs: str = "",
                                 code_context: str = "",
                                 user_symptoms: str = "") -> str:
-        """Build the context block injected into all debate prompts."""
-        parts = [f"## Project Profile\n"
-                 f"- **Name**: {self.fp.project_name}\n"
-                 f"- **Language**: {self.fp.primary_language.value}\n"
-                 f"- **Framework**: {self.fp.framework.value}\n"
-                 f"- **Type**: {self.fp.project_type.value}\n"
-                 f"- **Build system**: {self.fp.build_system}\n"]
+        """构建注入所有辩论 Prompt 的上下文块。"""
+        parts = [f"## 项目信息\n"
+                 f"- **项目名**：{self.fp.project_name}\n"
+                 f"- **语言**：{self.fp.primary_language.value}\n"
+                 f"- **框架**：{self.fp.framework.value}\n"
+                 f"- **类型**：{self.fp.project_type.value}\n"
+                 f"- **构建系统**：{self.fp.build_system}\n"]
 
         if metrics:
-            parts.append(f"\n## Performance Metrics\n"
-                        f"- QPS: {metrics.get('qps', 'N/A')}\n"
-                        f"- Avg Latency: {metrics.get('avg_latency', 'N/A')} ms\n"
-                        f"- P99 Latency: {metrics.get('p99_latency', 'N/A')} ms\n"
-                        f"- Error Rate: {metrics.get('error_rate', 'N/A')}\n")
+            parts.append(f"\n## 性能指标\n"
+                        f"- QPS：{metrics.get('qps', 'N/A')}\n"
+                        f"- 平均延迟：{metrics.get('avg_latency', 'N/A')} ms\n"
+                        f"- P99 延迟：{metrics.get('p99_latency', 'N/A')} ms\n"
+                        f"- 错误率：{metrics.get('error_rate', 'N/A')}\n")
 
         if user_symptoms:
-            parts.append(f"\n## Reported Symptoms\n{user_symptoms}\n")
+            parts.append(f"\n## 用户反馈的问题\n{user_symptoms}\n")
 
         if code_context:
-            parts.append(f"\n## Relevant Code Context\n{code_context[:4000]}\n")
+            parts.append(f"\n## 相关代码上下文\n{code_context[:4000]}\n")
 
         if logs:
-            parts.append(f"\n## Application Logs\n{logs[:2000]}\n")
+            parts.append(f"\n## 应用日志\n{logs[:2000]}\n")
 
         if error_logs:
-            parts.append(f"\n## Error Logs\n{error_logs[:1500]}\n")
+            parts.append(f"\n## 错误日志\n{error_logs[:1500]}\n")
 
         return "\n".join(parts)
 
     def build_proposer_prompt(self, analysis_context: str,
-                               target_improvement: str = "Identify and fix the most impactful issues") -> str:
-        """Generate the Proposer prompt for a specific language/project."""
+                               target_improvement: str = "找出并修复最严重的问题") -> str:
+        """为特定语言/项目生成 Proposer（方案提出者）Prompt。"""
         lang = self.fp.primary_language.value
         ptype = self.fp.project_type.value
 
         lang_guidance = self._language_specific_guidance()
 
-        return f"""You are an expert {lang} {ptype} diagnostics specialist (Proposer).
+        return f"""你是一位 {lang} {ptype} 诊断专家（Proposer / 方案提出者）。
+请用中文输出所有分析内容。
 
-Your job: analyze the project context below and propose specific, actionable fixes or improvements.
+你的任务：分析以下项目上下文，提出具体、可落地的优化或修复方案。
 
 {analysis_context}
 
-## Target
+## 诊断目标
 {target_improvement}
 
-## Language-Specific Guidance
+## {lang} 语言专项指导
 {lang_guidance}
 
-## Output Requirements
-Return a JSON object with your analysis and proposals:
+## 输出要求
+返回 JSON 对象，包含你的分析和方案：
 ```json
 {{
   "analysis": {{
-    "root_cause": "concise root cause (max 100 chars)",
-    "impact_assessment": "what's affected and how severely"
+    "root_cause": "根因分析（中文，100字以内）",
+    "impact_assessment": "影响评估（中文，说明影响范围和严重程度）"
   }},
   "proposals": [
     {{
-      "title": "short descriptive title (max 10 words)",
-      "location": "file_path:line_number",
-      "problem": "what's wrong (max 150 chars)",
-      "solution": "concrete fix, with pseudocode if applicable",
-      "implementation_steps": ["step 1", "step 2", "step 3"],
-      "expected_improvement": "quantified if possible (e.g. 15% latency reduction)",
-      "priority": 1_to_5,
+      "title": "方案标题（中文，15字以内）",
+      "location": "文件路径:行号",
+      "problem": "具体问题描述（中文，150字以内）",
+      "solution": "具体修复方案，可用伪代码说明",
+      "implementation_steps": ["步骤1（中文）", "步骤2（中文）", "步骤3（中文）"],
+      "expected_improvement": "预期改进效果（中文，如：延迟降低约15%）",
+      "priority": 1至5,
       "risk_level": "low/medium/high"
     }}
   ]
 }}
 ```
-Return ONLY the JSON, no other text."""
+只返回 JSON，不要其他文字。"""
 
     def build_critique_prompt(self, proposals_json: str, analysis_context: str) -> str:
-        """Generate the Critique prompt."""
+        """生成 Critique（交叉审查者）Prompt。"""
         lang = self.fp.primary_language.value
 
-        return f"""You are a rigorous {lang} software architect (Critique).
+        return f"""你是一位严谨的 {lang} 软件架构审查专家（Critique / 交叉审查者）。
+请用中文输出所有审查意见。
 
-Your job: review the Proposer's suggestions for correctness, safety, and feasibility.
+你的任务：审查 Proposer 提出的方案，从正确性、安全性、可行性角度评估。
 
-## Project Context
+## 项目上下文
 {analysis_context}
 
-## Proposer's Suggestions
+## Proposer 的方案
 {proposals_json}
 
-## Review Dimensions
-1. **Correctness**: Could this fix introduce new bugs?
-2. **Safety**: Thread safety, data consistency, error handling
-3. **Feasibility**: Is the proposed change realistic given the codebase?
-4. **Side Effects**: What else might break?
+## 审查维度
+1. **正确性**：这个修复是否会引入新的 Bug？
+2. **安全性**：线程安全、数据一致性、异常处理是否考虑周全？
+3. **可行性**：在当前代码库中实施这个方案的现实程度如何？
+4. **副作用**：改动可能导致什么其他问题？
 
-## Output
-Return JSON:
+## 输出格式
+返回 JSON（请用中文）：
 ```json
 {{
   "verdicts": [
     {{
-      "proposal_title": "matching title from proposer",
-      "verdict": "accept / modify / reject",
-      "concerns": ["concern 1", "concern 2"],
-      "suggested_modifications": "if modify: what to change"
+      "proposal_title": "对应的方案标题",
+      "verdict": "accept（接受） / modify（需修改） / reject（拒绝）",
+      "concerns": ["需要关注的问题1（中文）", "问题2（中文）"],
+      "suggested_modifications": "如果需要修改，给出具体修改建议（中文）"
     }}
   ],
-  "overall_assessment": "summary of review quality and confidence (1 sentence)"
+  "overall_assessment": "总体评价（一句话，中文）"
 }}
 ```
-Return ONLY the JSON."""
+只返回 JSON，不要其他文字。"""
 
     def build_judge_prompt(self, proposals_json: str, critiques_json: str,
                             analysis_context: str) -> str:
-        """Generate the Judge prompt."""
+        """生成 Judge（最终仲裁者）Prompt。"""
         lang = self.fp.primary_language.value
 
-        return f"""You are a {lang} engineering lead (Judge) making the final call.
+        return f"""你是一位 {lang} 技术负责人（Judge / 最终仲裁者），需要做出最终决策。
+请用中文输出最终诊断报告。
 
-## Project Context
+## 项目上下文
 {analysis_context}
 
-## Proposer's Suggestions
+## Proposer 的方案
 {proposals_json}
 
-## Critique Feedback
+## Critique 的审查意见
 {critiques_json}
 
-## Your Task
-Synthesize both perspectives and produce a final, actionable diagnostic report.
+## 你的任务
+综合双方观点，产出一份最终的可执行诊断报告。
 
-Return JSON:
+返回 JSON（请用中文）：
 ```json
 {{
-  "decision": "accepted / mixed / rejected",
-  "reasoning": "why this decision was reached (max 150 chars)",
+  "decision": "accepted（接受） / mixed（部分接受） / rejected（拒绝）",
+  "reasoning": "决策理由（中文，150字以内）",
   "final_suggestions": [
     {{
-      "title": "title",
-      "description": "actionable problem + solution description",
-      "implementation": "concrete steps to implement",
-      "location": "file:line if applicable",
-      "priority": 1_to_5,
+      "title": "最终建议标题（中文）",
+      "description": "问题分析 + 解决方案描述（中文）",
+      "implementation": "具体实施步骤（中文）",
+      "location": "文件:行号（如适用）",
+      "priority": 1至5,
       "risk_level": "low/medium/high",
-      "consensus": "high / medium / low — how much the models agree"
+      "consensus": "high（高共识） / medium（中等） / low（低共识）"
     }}
   ],
-  "risk_summary": "top risks to watch for during implementation"
+  "risk_summary": "实施过程中需要注意的顶层风险（中文）"
 }}
 ```
-Return ONLY the JSON."""
+只返回 JSON，不要其他文字。"""
 
-    # ── Language-specific guidance ─────────────────────────────────────
+    # ── 语言专项诊断指导 ─────────────────────────────────────────────
 
     def _language_specific_guidance(self) -> str:
-        """Return language-specific diagnostic hints."""
+        """返回语言专项诊断提示。"""
         lang = self.fp.primary_language
 
         guidance = {
             Language.PYTHON: (
-                "- Check for GIL contention in CPU-bound threads\n"
-                "- Watch for asyncio event loop blocking\n"
-                "- Use tracemalloc / py-spy for memory profiling\n"
-                "- Consider pydantic model overhead in hot paths"
+                "- 检查 CPU 密集型线程中的 GIL 争用\n"
+                "- 关注 asyncio 事件循环阻塞\n"
+                "- 使用 tracemalloc / py-spy 进行内存分析\n"
+                "- 考虑 pydantic 模型在热路径中的开销\n"
+                "- 检查 Flask/FastAPI 中是否存在同步阻塞调用"
             ),
             Language.GO: (
-                "- Use pprof for CPU/memory profiling\n"
-                "- Check goroutine leaks with runtime.NumGoroutine()\n"
-                "- Watch for channel blocking and select{} deadlocks\n"
-                "- Use race detector: go test -race\n"
-                "- Consider sync.Pool for allocation-heavy paths"
+                "- 使用 pprof 进行 CPU/内存分析\n"
+                "- 检查 goroutine 泄漏（runtime.NumGoroutine()）\n"
+                "- 关注 channel 阻塞和 select{} 死锁\n"
+                "- 使用竞态检测器：go test -race\n"
+                "- 考虑在分配密集路径中使用 sync.Pool"
             ),
             Language.RUST: (
-                "- Check for unnecessary .clone() calls\n"
-                "- Watch for async task spawning without joining\n"
-                "- Use cargo-flamegraph for CPU profiling\n"
-                "- Consider lock contention: std::sync::Mutex vs tokio::sync::Mutex"
+                "- 检查不必要的 .clone() 调用\n"
+                "- 关注 async task 未 join 导致泄漏\n"
+                "- 使用 cargo-flamegraph 进行 CPU 分析\n"
+                "- 考虑锁竞争：std::sync::Mutex vs tokio::sync::Mutex"
             ),
             Language.CPP: (
-                "- Use perf + FlameGraph for CPU profiling\n"
-                "- Check for memory leaks with Valgrind/ASAN\n"
-                "- Watch for lock contention in multi-threaded paths\n"
-                "- Consider move semantics and copy elision opportunities\n"
-                "- Check for virtual function dispatch overhead in hot paths"
+                "- 使用 perf + FlameGraph 进行 CPU 分析\n"
+                "- 使用 Valgrind/ASAN 检查内存泄漏\n"
+                "- 关注多线程路径中的锁竞争\n"
+                "- 考虑移动语义和拷贝省略优化\n"
+                "- 检查热路径中虚函数调度的开销"
             ),
             Language.JAVA: (
-                "- Use JFR (Java Flight Recorder) for profiling\n"
-                "- Check GC pause times and allocation rates\n"
-                "- Watch for thread pool exhaustion\n"
-                "- Use Arthas for live diagnosis"
+                "- 使用 JFR（Java Flight Recorder）进行性能分析\n"
+                "- 检查 GC 暂停时间和分配速率\n"
+                "- 关注线程池耗尽问题\n"
+                "- 使用 Arthas 进行在线诊断"
             ),
             Language.JAVASCRIPT: (
-                "- Use clinic.js / 0x for flame graphs\n"
-                "- Check for Promise.all() missing error handlers\n"
-                "- Watch for event loop blocking with synchronous I/O\n"
-                "- Use --inspect + Chrome DevTools for CPU profiling"
+                "- 使用 clinic.js / 0x 生成火焰图\n"
+                "- 检查 Promise.all() 是否缺少错误处理\n"
+                "- 关注同步 I/O 阻塞事件循环\n"
+                "- 使用 --inspect + Chrome DevTools 进行 CPU 分析\n"
+                "- 检查前端是否有未清理的定时器和事件监听器"
             ),
             Language.TYPESCRIPT: (
-                "- Same as JavaScript, plus:\n"
-                "- Check for excessive type inference overhead\n"
-                "- Watch for decorator overhead in NestJS"
+                "- 同上 JavaScript 指导，外加：\n"
+                "- 检查过度类型推断的性能开销\n"
+                "- 关注 NestJS 中装饰器的运行时开销"
             ),
             Language.RUBY: (
-                "- Use ruby-prof / stackprof for CPU profiling\n"
-                "- Check for N+1 queries in ActiveRecord\n"
-                "- Watch for memory bloat from object allocations\n"
-                "- Use rbtrace for live method tracing"
+                "- 使用 ruby-prof / stackprof 进行 CPU 分析\n"
+                "- 检查 ActiveRecord 中的 N+1 查询\n"
+                "- 关注对象分配导致的内存膨胀\n"
+                "- 使用 rbtrace 进行在线方法追踪"
             ),
             Language.SWIFT: (
-                "- Use Instruments (Time Profiler, Allocations) for profiling\n"
-                "- Check for retain cycles causing memory leaks\n"
-                "- Watch for main thread blocking\n"
-                "- Use swift-concurrency checks for actor isolation"
+                "- 使用 Instruments（Time Profiler、Allocations）进行分析\n"
+                "- 检查循环引用导致的内存泄漏\n"
+                "- 关注主线程阻塞\n"
+                "- 使用 swift-concurrency 检查 actor 隔离"
             ),
             Language.CSHARP: (
-                "- Use dotnet-trace / PerfView for CPU profiling\n"
-                "- Check for async/await deadlocks (ConfigureAwait)\n"
-                "- Watch for LINQ materialization overhead\n"
-                "- Use dotnet-counters for live metrics"
+                "- 使用 dotnet-trace / PerfView 进行 CPU 分析\n"
+                "- 检查 async/await 死锁（ConfigureAwait）\n"
+                "- 关注 LINQ 物化开销\n"
+                "- 使用 dotnet-counters 进行实时监控"
             ),
             Language.KOTLIN: (
-                "- Reuses JVM tools: JFR, jstack, jmap\n"
-                "- Check for coroutine cancellation leaks\n"
-                "- Watch for unnecessary object boxing\n"
-                "- Use kotlinx-benchmark for microbenchmarks"
+                "- 复用 JVM 工具：JFR、jstack、jmap\n"
+                "- 检查协程取消泄漏\n"
+                "- 关注不必要的对象装箱\n"
+                "- 使用 kotlinx-benchmark 进行微基准测试"
             ),
             Language.ZIG: (
-                "- Use valgrind + kcachegrind for profiling\n"
-                "- Check for undefined behavior with zig test\n"
-                "- Watch for allocator mismatches\n"
-                "- Use std.testing.expectApproxEqRel for float comparisons"
+                "- 使用 valgrind + kcachegrind 进行分析\n"
+                "- 使用 zig test 检查未定义行为\n"
+                "- 关注分配器不匹配问题\n"
+                "- 浮点数比较使用 std.testing.expectApproxEqRel"
             ),
         }
 
-        return guidance.get(lang, "- Use standard profiling tools for this language\n"
-                            "- Check for common concurrency and memory issues")
+        return guidance.get(lang, "- 使用该语言的通用分析工具\n"
+                            "- 检查常见的并发和内存问题")

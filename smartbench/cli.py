@@ -740,7 +740,7 @@ def _load_api_keys_from_env() -> Optional[Dict[str, str]]:
 
 
 def _call_llm(api_config: Dict, prompt: str,
-              system: str = "You are an expert software engineer. Respond with ONLY the requested JSON.",
+              system: str = "你是一位资深软件工程师。请用中文回复。只返回要求的 JSON，不要其他内容。",
               prefer_provider: str = "") -> str:
     """Call an LLM via OpenAI-compatible API.
 
