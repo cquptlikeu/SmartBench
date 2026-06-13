@@ -502,97 +502,279 @@ def resolve_project_path(input_path: str) -> Optional[str]:
     return None
 
 
-def configure_api_keys() -> Optional[Dict[str, str]]:
-    """Interactive API key configuration.
+# ═══════════════════════════════════════════════════════════════════════
+# Provider Registry — auto-detects base URL + provider from model name
+# ═══════════════════════════════════════════════════════════════════════
 
-    Behavior (matches user requirement: reconfigure on each terminal restart):
-    1. Checks environment variables — offers to use them (quick path)
-    2. User can decline env vars and enter keys manually
-    3. If no env vars, prompts for manual entry
-    4. Keys are stored ONLY in memory (never persisted to disk)
-    5. When terminal closes → all state lost → next 'smartbench' re-prompts
+PROVIDER_REGISTRY = {
+    "deepseek": {
+        "base_url": "https://api.deepseek.com/v1",
+        "patterns": ["deepseek"],
+        "display": "DeepSeek",
+    },
+    "openai": {
+        "base_url": "https://api.openai.com/v1",
+        "patterns": ["gpt-", "o1-", "o3-", "o4-"],
+        "display": "OpenAI",
+    },
+    "anthropic": {
+        "base_url": "https://api.anthropic.com/v1",
+        "patterns": ["claude-"],
+        "display": "Anthropic",
+    },
+    "glm": {
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "patterns": ["glm-", "chatglm", "cogview"],
+        "display": "Zhipu GLM",
+    },
+    "doubao": {
+        "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+        "patterns": ["doubao-", "seed-"],
+        "display": "ByteDance Doubao",
+    },
+    "moonshot": {
+        "base_url": "https://api.moonshot.cn/v1",
+        "patterns": ["moonshot-", "kimi"],
+        "display": "Moonshot Kimi",
+    },
+    "qwen": {
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "patterns": ["qwen-", "qwq-"],
+        "display": "Alibaba Qwen",
+    },
+    "local": {
+        "base_url": "http://localhost:11434/v1",
+        "patterns": ["llama", "mistral", "qwen2", "codellama", "deepseek-r1"],
+        "display": "Local (Ollama-compatible)",
+    },
+}
+
+
+def _detect_provider(model_name: str) -> tuple:
+    """Given a model name, return (provider_key, base_url, display_name)."""
+    model_lower = model_name.lower().strip()
+    for key, info in PROVIDER_REGISTRY.items():
+        for pattern in info["patterns"]:
+            if model_lower.startswith(pattern):
+                return (key, info["base_url"], info["display"])
+    # Fallback: treat as OpenAI-compatible generic
+    return ("openai", "https://api.openai.com/v1", "OpenAI-compatible")
+
+
+def masked_input(prompt_text: str) -> str:
+    """Read a secret with * echo for each character typed.
+
+    Shows one * per character as the user types, then reveals last 4 chars
+    after submission so the user knows their input was registered.
     """
-    apis = {}
+    import sys as _sys
 
-    console.print("\n  [dim]API keys are stored in memory only — restart terminal to reconfigure.[/dim]")
-    console.print("  [dim]Press Enter to skip any provider.[/dim]")
+    console.print(f"  {prompt_text}: ", end="")
 
-    env_keys = {
+    if _sys.platform == "win32":
+        import msvcrt
+        chars = []
+        while True:
+            ch = msvcrt.getwch()
+            if ch in ("\r", "\n"):
+                console.print()
+                break
+            if ch == "\x08":  # backspace
+                if chars:
+                    chars.pop()
+                    console.print("\b \b", end="")
+                continue
+            if ch == "\x03":  # Ctrl+C
+                raise KeyboardInterrupt
+            chars.append(ch)
+            console.print("*", end="")
+        value = "".join(chars)
+    else:
+        import termios
+        import tty
+        fd = _sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            chars = []
+            while True:
+                ch = _sys.stdin.read(1)
+                if ch in ("\r", "\n"):
+                    console.print()
+                    break
+                if ch == "\x7f":  # backspace
+                    if chars:
+                        chars.pop()
+                        console.print("\b \b", end="")
+                    continue
+                if ch == "\x03":  # Ctrl+C
+                    raise KeyboardInterrupt
+                chars.append(ch)
+                console.print("*", end="")
+            value = "".join(chars)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+    # Show masked confirmation
+    if value:
+        mask = value[:3] + "****" + value[-4:] if len(value) > 10 else "****"
+        console.print(f"    [dim]saved: {mask}[/dim]")
+    return value
+
+
+def configure_api_keys() -> Optional[Dict[str, str]]:
+    """Interactive model + API key configuration.
+
+    User only needs to provide:
+      1. Model name (e.g. deepseek-chat, gpt-4o, claude-sonnet-4)
+      2. API key (masked input with * echo)
+
+    Everything else (provider, base URL) is auto-detected from the
+    built-in PROVIDER_REGISTRY.
+
+    Keys stored in memory only — never persisted to disk.
+    """
+    models_list = []
+
+    console.print("\n  [dim]Keys stored in memory only — restart terminal to reconfigure.[/dim]")
+
+    # Check environment variables first
+    env_providers = {
         "deepseek": os.environ.get("DEEPSEEK_API_KEY", ""),
         "openai": os.environ.get("OPENAI_API_KEY", ""),
         "anthropic": os.environ.get("ANTHROPIC_API_KEY", ""),
         "glm": os.environ.get("GLM_API_KEY", ""),
         "doubao": os.environ.get("DOUBAO_API_KEY", ""),
+        "moonshot": os.environ.get("MOONSHOT_API_KEY", ""),
+        "qwen": os.environ.get("DASHSCOPE_API_KEY", ""),
     }
 
-    used_providers = set()
+    for provider, key in env_providers.items():
+        if key:
+            info = PROVIDER_REGISTRY.get(provider, {})
+            display = info.get("display", provider)
+            if Confirm.ask(f"  Use ${provider.upper()}_API_KEY from env? ({display})", default=True):
+                models_list.append({
+                    "provider": provider,
+                    "model": "auto",  # will be filled by _call_llm
+                    "api_key": key,
+                    "base_url": info.get("base_url", ""),
+                })
+                console.print(f"    [green]OK[/green] {display}")
 
-    # Offer env vars first
-    for provider, env_val in env_keys.items():
-        if env_val:
-            if Confirm.ask(f"  Use ${provider.upper()}_API_KEY from environment?", default=True):
-                apis[provider] = env_val
-                used_providers.add(provider)
-                console.print(f"    [green]OK[/green] {provider}")
+    # Manual entry
+    console.print(f"\n  [bold]Add models manually:[/bold]")
+    console.print(f"  [dim]Examples: deepseek-chat | gpt-4o | claude-sonnet-4 | glm-4 | doubao-seed-2.0-pro[/dim]")
+    console.print(f"  [dim]Press Enter on model name to finish.[/dim]")
 
-    # Always allow manual entry for any remaining providers
-    remaining = [p for p in ["deepseek", "openai", "anthropic"] if p not in used_providers]
-    if remaining:
-        console.print(f"\n  [dim]Enter keys for remaining providers (or press Enter to skip):[/dim]")
-        for provider in remaining:
-            key = Prompt.ask(f"  {provider} API key", default="", password=True)
-            if key:
-                base_url = Prompt.ask(f"  {provider} base URL (optional)", default="")
-                apis[provider] = key
-                if base_url:
-                    apis[f"{provider}_base_url"] = base_url
-                    console.print(f"    [green]OK[/green] {provider}")
+    while True:
+        model = Prompt.ask("\n  Model name", default="").strip()
+        if not model:
+            break
 
-    return apis if apis else None
+        provider_key, base_url, display = _detect_provider(model)
+
+        # Confirm auto-detection, allow override
+        console.print(f"    [dim]Detected: {display} → {base_url}[/dim]")
+        override = Prompt.ask(f"    Base URL (Enter to confirm, or type custom)", default="").strip()
+        if override:
+            base_url = override
+
+        key = masked_input(f"    API key for {model}")
+        if not key:
+            console.print("    [yellow]Skipped (no key)[/yellow]")
+            continue
+
+        models_list.append({
+            "provider": provider_key,
+            "model": model,
+            "api_key": key,
+            "base_url": base_url,
+        })
+        console.print(f"    [green]OK[/green] {model} ({display})")
+
+    if not models_list:
+        return None
+
+    return {"models": models_list}
 
 
 def _load_api_keys_from_env() -> Optional[Dict[str, str]]:
-    """Load API keys from environment variables."""
-    apis = {}
-    for provider in ["OPENAI", "DEEPSEEK", "GLM", "DOUBAO", "ANTHROPIC"]:
-        key = os.environ.get(f"{provider}_API_KEY", "")
+    """Load API keys from environment variables (quick mode)."""
+    models = []
+    env_map = {
+        "DEEPSEEK_API_KEY": ("deepseek", "deepseek-chat"),
+        "OPENAI_API_KEY": ("openai", "gpt-4o"),
+        "ANTHROPIC_API_KEY": ("anthropic", "claude-sonnet-4-20250514"),
+        "GLM_API_KEY": ("glm", "glm-4-0520"),
+        "DOUBAO_API_KEY": ("doubao", "doubao-seed-2.0-pro-260215"),
+        "MOONSHOT_API_KEY": ("moonshot", "moonshot-v1-8k"),
+        "DASHSCOPE_API_KEY": ("qwen", "qwen-max"),
+    }
+    for env_var, (provider, default_model) in env_map.items():
+        key = os.environ.get(env_var, "")
         if key:
-            apis[provider.lower()] = key
-    return apis if apis else None
+            info = PROVIDER_REGISTRY.get(provider, {})
+            models.append({
+                "provider": provider,
+                "model": default_model,
+                "api_key": key,
+                "base_url": info.get("base_url", ""),
+            })
+    return {"models": models} if models else None
 
 
-def _call_llm(api_config: Dict[str, str], prompt: str,
+def _call_llm(api_config: Dict, prompt: str,
               system: str = "You are an expert software engineer. Respond with ONLY the requested JSON.",
-              model: str = "deepseek") -> str:
-    """Call an LLM via OpenAI-compatible API."""
+              prefer_provider: str = "") -> str:
+    """Call an LLM via OpenAI-compatible API.
+
+    Args:
+        api_config: {"models": [{"provider":..., "model":..., "api_key":..., "base_url":...}, ...]}
+        prompt: The user prompt
+        system: System prompt
+        prefer_provider: Try this provider first (e.g. "deepseek"), then fall back to others
+    """
     import urllib.request
     import urllib.error
 
-    BASE_URLS = {
-        "deepseek": "https://api.deepseek.com/v1",
-        "openai": "https://api.openai.com/v1",
-        "glm": "https://open.bigmodel.cn/api/paas/v4",
-        "doubao": "https://ark.cn-beijing.volces.com/api/v3",
-        "anthropic": "https://api.anthropic.com/v1",
-    }
+    models = api_config.get("models", [])
 
-    MODEL_NAMES = {
-        "deepseek": "deepseek-chat",
-        "openai": "gpt-4o",
-        "glm": "glm-4-0520",
-        "doubao": "doubao-seed-2.0-pro-260215",
-        "anthropic": "claude-sonnet-4-20250514",
-    }
+    # Fallback: old format {provider: key, ...}
+    if not models and isinstance(api_config, dict):
+        # Convert old format to new
+        for provider in ["deepseek", "openai", "anthropic", "glm", "doubao"]:
+            key = api_config.get(provider, "")
+            if key:
+                info = PROVIDER_REGISTRY.get(provider, {})
+                models.append({
+                    "provider": provider,
+                    "model": "auto",
+                    "api_key": key,
+                    "base_url": info.get("base_url", ""),
+                })
 
-    order = [model] + [p for p in api_config if p != model and not p.endswith("_base_url")]
+    if not models:
+        return ""
 
-    for provider in order:
-        api_key = api_config.get(provider)
+    # Order: prefer_provider first, then rest
+    ordered = sorted(models, key=lambda m: 0 if m["provider"] == prefer_provider else 1)
+
+    for m in ordered:
+        api_key = m.get("api_key", "")
         if not api_key:
             continue
 
-        base_url = api_config.get(f"{provider}_base_url", BASE_URLS.get(provider, ""))
-        model_name = MODEL_NAMES.get(provider, "gpt-3.5-turbo")
+        base_url = m.get("base_url", "").rstrip("/")
+        model_name = m.get("model", "auto")
+        # If model is "auto", try to guess from provider
+        if model_name == "auto":
+            defaults = {"deepseek": "deepseek-chat", "openai": "gpt-4o",
+                       "glm": "glm-4-0520", "doubao": "doubao-seed-2.0-pro-260215",
+                       "anthropic": "claude-sonnet-4-20250514",
+                       "moonshot": "moonshot-v1-8k", "qwen": "qwen-max"}
+            model_name = defaults.get(m["provider"], "gpt-3.5-turbo")
+
         url = f"{base_url}/chat/completions"
 
         body = json.dumps({
@@ -614,11 +796,11 @@ def _call_llm(api_config: Dict[str, str], prompt: str,
                 data = json.loads(resp.read().decode("utf-8"))
                 return data["choices"][0]["message"]["content"]
         except urllib.error.HTTPError as e:
-            error_body = e.read().decode("utf-8", errors="ignore")[:500]
-            console.print(f"  [dim]{provider} HTTP {e.code}: {error_body}[/dim]")
+            error_body = e.read().decode("utf-8", errors="ignore")[:300]
+            console.print(f"  [dim]{m['provider']} HTTP {e.code}: {error_body}[/dim]")
             continue
         except Exception as e:
-            console.print(f"  [dim]{provider} error: {e}[/dim]")
+            console.print(f"  [dim]{m['provider']} error: {e}[/dim]")
             continue
 
     return ""
