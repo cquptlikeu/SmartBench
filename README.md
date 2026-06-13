@@ -1,251 +1,244 @@
 # SmartBench v0.5
 
-**Universal AI-Powered Code Diagnosis Tool** — any language, any framework, any project.
+**通用 AI 代码诊断平台** — 任意语言、任意框架、任意项目，即开即用。
 
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ---
 
-## What is SmartBench?
+## 项目简介
 
-SmartBench is a **universal code diagnosis platform** that uses LLM-powered multi-agent debate
-to analyze any codebase. Drop it on a Python CLI tool, a Go microservice, a Rust library,
-or a Java monolith — it auto-detects the language, builds a code graph, and produces
-actionable diagnostic reports.
+SmartBench 是一款**通用代码智能诊断平台**。它利用 LLM 驱动的多 Agent 辩论引擎，
+对任意代码仓库进行深度分析。无论是 Python CLI 工具、Go 微服务、Rust 库还是 Java 单体应用 —
+只需指向项目路径，SmartBench 自动识别语言和框架，构建代码图，产出可落地的诊断报告。
 
-**Core principle**: SmartBench analyzes and suggests — it never modifies your code.
+**核心原则**：SmartBench 只分析、只建议，**绝不修改**被测项目的任何代码。
 
-### The 5-Phase Pipeline
+### 五阶段诊断流水线
 
 ```
 $ smartbench
   │
-  ├─ Phase 1 ─ Project Fingerprint
-  │   Scans filesystem deterministically (zero LLM).
-  │   Detects: language, framework, project type, build system, dependencies.
+  ├─ 阶段 1 ─ 项目指纹采集（零 LLM 调用）
+  │   确定性扫描文件系统，检测语言、框架、项目类型、构建系统、依赖关系。
   │
-  ├─ Phase 2 ─ LLM Project Understanding (optional)
-  │   LLM reads README.md + fingerprint → understands project purpose & domain.
+  ├─ 阶段 2 ─ LLM 项目理解（可选）
+  │   LLM 阅读 README.md + 指纹信息，理解项目用途和领域。
   │
-  ├─ Phase 3 ─ Strategy Selection
-  │   LLM selects the optimal diagnostic strategy from a pre-validated template library.
-  │   (LLM chooses, not invents — constrained to proven strategies.)
+  ├─ 阶段 3 ─ 诊断策略选择
+  │   LLM 从已验证的策略模板库中选择最优策略（LLM 负责选择，而非凭空发明）。
   │
-  ├─ Phase 4 ─ Code Graph Construction
-  │   Builds a call graph + dependency graph from source files.
-  │   Graph-enhanced context retrieval: 5-10x more token-efficient than full-file reading.
+  ├─ 阶段 4 ─ 代码图构建
+  │   从源码构建调用图 + 依赖图，图增强上下文检索，Token 效率提升 5-10 倍。
   │
-  └─ Phase 5 ─ Multi-Agent Debate
-      Proposer → Critique → Judge pipeline cross-validates findings.
-      Output: prioritized, actionable diagnostic report.
+  └─ 阶段 5 ─ 多 Agent 辩论
+      Proposer → Critique → Judge 三角色交叉验证，输出优先级排序的诊断报告。
 ```
 
 ---
 
-## Quick Start
+## 快速开始
 
-### Installation
+### 安装
 
 ```bash
 pip install -e .
-# or: pip install smartbench
+# 或者: pip install smartbench
 ```
 
-Requires Python 3.10+.
+需要 Python 3.10+。
 
-### First Run
+### 首次运行
 
 ```bash
 smartbench
 ```
 
-You'll be guided through a 4-step interactive wizard:
+跟随 4 步交互式向导：
 
 ```
-Step 1/4 — Where is your code?
+Step 1/4 — 代码在哪里？
   Project path/URL: /path/to/your/project
 
-Step 2/4 — Configure LLM
+Step 2/4 — 配置大模型
   Model name: deepseek-chat
   API key for deepseek-chat: **********
   saved: sk-****b3e4
   OK deepseek-chat (DeepSeek)
 
-Step 3/4 — Analyzing your project...
+Step 3/4 — 正在分析你的项目...
   [python] [fastapi] [web_service] 142 src files (git)
 
-Step 4/4 — What would you like to diagnose?
-  Concern: performance issues
+Step 4/4 — 你想诊断什么问题？
+  Concern: 性能问题
 
-  Building code graph... 847 nodes, 4521 edges
-  Running multi-agent debate... 3 rounds, ~1850 tokens
+  正在构建代码图... 847 nodes, 4521 edges
+  多 Agent 辩论中... 3 rounds, ~1850 tokens
 
-  Diagnostic Report:
-   - Finding #1: Optimize DB connection pooling (Priority 5)
-   - Finding #2: Add Redis caching for hot endpoints (Priority 4)
+  诊断报告:
+   - 发现 #1: 优化数据库连接池 (Priority 5)
+   - 发现 #2: 对热点接口添加 Redis 缓存 (Priority 4)
 ```
 
-### Quick Mode
+### 快速模式
 
-Skip the wizard with pre-configured environment variables:
+配置环境变量后跳过向导：
 
 ```bash
 export DEEPSEEK_API_KEY="sk-your-key"
 smartbench --quick -p /path/to/project -c "performance"
 ```
 
-### Commands
+### 命令一览
 
-| Command | Description |
-|---------|-------------|
-| `smartbench` | Full interactive wizard |
-| `smartbench quick` | Minimal prompts, auto-detect from env |
-| `smartbench diagnose -p <path>` | Diagnosis only (no benchmarking) |
-| `smartbench check` | Show available diagnostic tools |
-
----
-
-## Supported Languages & Frameworks
-
-### Language Detection (14 languages)
-
-| Language | Detection | Code Graph | Language Guidance |
-|----------|-----------|------------|-------------------|
-| Python | `.py`, `requirements.txt`, `pyproject.toml` | ✅ functions/classes/imports/calls | GIL, asyncio, tracemalloc, py-spy |
-| Go | `.go`, `go.mod` | ✅ funcs/structs/interfaces/calls | pprof, race detector, goroutine leaks |
-| Rust | `.rs`, `Cargo.toml` | ✅ fns/structs/impls/traits/calls | clone() overhead, async, lock contention |
-| C/C++ | `.cpp/.cc/.c/.h`, `CMakeLists.txt` | ✅ functions/classes/structs/calls | GDB, Valgrind, ASAN, perf, flamegraph |
-| Java | `.java`, `pom.xml`, `build.gradle` | ✅ methods/classes/interfaces/calls | JFR, jstack, GC analysis, Arthas |
-| Kotlin | `.kt/.kts`, `build.gradle.kts` | ✅ funs/classes/calls | JVM tools + coroutine checks |
-| JavaScript | `.js/.mjs/.cjs`, `package.json` | ✅ functions/classes/imports/calls | clinic.js, event loop, Promise errors |
-| TypeScript | `.ts/.tsx`, `tsconfig.json` | ✅ functions/classes/imports/calls | JS tools + type inference, decorators |
-| Ruby | `.rb`, `Gemfile` | ✅ defs/classes/calls | ruby-prof, N+1 queries, memory bloat |
-| Swift | `.swift`, `Package.swift` | ✅ funcs/classes/structs/calls | Instruments, retain cycles, main thread |
-| C# | `.cs` | ✅ methods/classes/interfaces/calls | dotnet-trace, async deadlocks, LINQ |
-| Zig | `.zig`, `build.zig` | ✅ fns/structs/calls | valgrind, UB checks, allocator mismatches |
-
-### Framework Detection (20+ frameworks)
-
-Automatically identifies: FastAPI, Flask, Django, Gin, Echo, Fiber, go-kit, go-zero, Kratos,
-Express, NestJS, Next.js, React, Vue, Spring Boot, Axum, Actix, Rocket, gRPC, brpc, and more.
+| 命令 | 说明 |
+|------|------|
+| `smartbench` | 完整交互式向导 |
+| `smartbench quick` | 快速模式，最小交互 |
+| `smartbench diagnose -p <路径>` | 仅诊断（跳过压测） |
+| `smartbench check` | 查看可用诊断工具 |
 
 ---
 
-## Features
+## 支持的语言与框架
 
-### 1. Multi-Agent Debate Engine
+### 语言检测（14 种）
 
-Three-role cross-validation reduces LLM hallucination:
+| 语言 | 检测方式 | 代码图 | 语言诊断指导 |
+|------|----------|--------|-------------|
+| Python | `.py`、`requirements.txt`、`pyproject.toml` | ✅ 函数/类/导入/调用 | GIL、asyncio、tracemalloc、py-spy |
+| Go | `.go`、`go.mod` | ✅ 函数/结构体/接口/调用 | pprof、竞态检测、goroutine 泄漏 |
+| Rust | `.rs`、`Cargo.toml` | ✅ 函数/结构体/实现/trait/调用 | clone() 开销、async、锁竞争 |
+| C/C++ | `.cpp/.cc/.c/.h`、`CMakeLists.txt` | ✅ 函数/类/结构体/调用 | GDB、Valgrind、ASAN、perf、火焰图 |
+| Java | `.java`、`pom.xml`、`build.gradle` | ✅ 方法/类/接口/调用 | JFR、jstack、GC 分析、Arthas |
+| Kotlin | `.kt/.kts`、`build.gradle.kts` | ✅ 函数/类/调用 | JVM 工具 + 协程检查 |
+| JavaScript | `.js/.mjs/.cjs`、`package.json` | ✅ 函数/类/导入/调用 | clinic.js、事件循环、Promise 异常 |
+| TypeScript | `.ts/.tsx`、`tsconfig.json` | ✅ 函数/类/导入/调用 | JS 工具 + 类型推断、装饰器 |
+| Ruby | `.rb`、`Gemfile` | ✅ 方法/类/调用 | ruby-prof、N+1 查询、内存膨胀 |
+| Swift | `.swift`、`Package.swift` | ✅ 函数/类/结构体/调用 | Instruments、循环引用、主线程阻塞 |
+| C# | `.cs` | ✅ 方法/类/接口/调用 | dotnet-trace、async 死锁、LINQ |
+| Zig | `.zig`、`build.zig` | ✅ 函数/结构体/调用 | valgrind、未定义行为、分配器错配 |
+
+### 框架检测（20+ 种）
+
+自动识别：FastAPI、Flask、Django、Gin、Echo、Fiber、go-kit、go-zero、Kratos、
+Express、NestJS、Next.js、React、Vue、Spring Boot、Axum、Actix、Rocket、gRPC、brpc 等。
+
+---
+
+## 核心特性
+
+### 1. 多 Agent 辩论引擎
+
+三角色交叉验证，有效降低 LLM 幻觉：
 
 ```
-Proposer (方案提出者)     →  Analyzes context, generates specific proposals
+Proposer（方案提出者） →  分析上下文，生成具体可落地的优化方案
     ↓
-Critique (交叉审查者)     →  Reviews for correctness, safety, side effects
+Critique（交叉审查者） →  从正确性、安全性、副作用三个维度审查
     ↓
-Judge (最终仲裁者)        →  Synthesizes into final prioritized recommendations
+Judge（最终仲裁者）    →  综合双方意见，输出优先级排序的最终建议
 ```
 
-All Prompts are dynamically generated from the project fingerprint
-— **zero hardcoded assumptions** about the target project.
+所有 Prompt 均由项目指纹**动态生成** — 对目标项目**零硬编码假设**。
 
-### 2. Code Graph Engine
+### 2. 代码图引擎
 
-- **AST Parsing**: Regex-based (tree-sitter ready) function/class/call extraction
-- **Graph Construction**: Nodes (functions, classes, files) + Edges (calls, imports, contains)
-- **Smart Retrieval**: Given a concern like "connection timeout", finds the exact functions
-  in the call chain instead of dumping entire files into the LLM context
-- **5-10x Token Savings**: Only relevant code context reaches the LLM
+- **AST 解析**：基于正则的启发式解析（可升级为 tree-sitter 精确解析）
+- **图构建**：节点（函数、类、文件）+ 边（调用、导入、包含）
+- **智能检索**：给定 "连接超时" 等描述，精准定位调用链上的相关函数
+- **Token 节省 5-10 倍**：只有真正相关的代码上下文进入 LLM
 
-### 3. Pluggable Diagnostic Tools
+### 3. 可插拔诊断工具
 
-| Category | Tools |
-|----------|-------|
-| System | dmesg, ps, vmstat |
-| Go | pprof, race detector, goroutine profile |
-| Python | tracemalloc, py-spy, cProfile, pip check |
-| C/C++ | GDB, Valgrind, ASAN, perf, flamegraph |
-| Java | JFR, jstack, jmap, Arthas |
-| Static Analysis | ruff, mypy, bandit (Python) / go vet, staticcheck (Go) / clippy (Rust) / ESLint (JS) |
+| 类别 | 工具 |
+|------|------|
+| 系统级 | dmesg、ps、vmstat |
+| Go | pprof、竞态检测器、goroutine 分析 |
+| Python | tracemalloc、py-spy、cProfile、pip check |
+| C/C++ | GDB、Valgrind、ASAN、perf、火焰图 |
+| Java | JFR、jstack、jmap、Arthas |
+| 静态分析 | ruff/mypy/bandit (Python) / go vet/staticcheck (Go) / clippy (Rust) |
 
-### 4. Strategy Selector
+### 4. 策略选择器
 
-LLM chooses from a **pre-validated strategy template library** (not from thin air):
+LLM 从**已验证的策略模板库**中选择（而非凭空发明）：
 
-- `performance_analysis` — CPU, memory, I/O profiling
-- `correctness_audit` — Bug detection, edge cases, error handling
-- `architecture_review` — Design patterns, coupling, cohesion
-- `security_scan` — Vulnerability detection, dependency auditing
-- `hotspot_analysis` — Focus on recently changed files (git-aware)
+- `performance_analysis` — CPU、内存、I/O 性能分析
+- `correctness_audit` — Bug 检测、边界情况、错误处理
+- `architecture_review` — 设计模式、耦合度、内聚性
+- `security_scan` — 漏洞检测、依赖审计
+- `hotspot_analysis` — 聚焦最近变更的热点文件（Git 感知）
 
-### 5. Configuration Lifecycle
+### 5. 配置生命周期
 
-- API keys stored **in memory only** — never written to disk
-- Each terminal restart → fresh reconfiguration (by design)
-- Supports 8 LLM providers with auto-detection from model name
-- Masked password input with `****abcd` confirmation
+- API 密钥**仅存储于内存** — 永不写入磁盘
+- 每次重启终端 → 重新配置（设计如此）
+- 支持 8 个 LLM 提供商，模型名称自动识别
+- 密码输入 `*` 回显 + `****abcd` 格式确认
 
 ---
 
-## Architecture
+## 项目架构
 
 ```
 SmartBench/
 ├── smartbench/
-│   ├── cli.py                      # CLI entry point (typer + rich)
-│   ├── detector/                   # Phase 1: Zero-LLM project fingerprinting
-│   │   ├── fingerprint.py          #   Language/Framework/ProjectType enums + data model
-│   │   └── scanner.py              #   Deterministic filesystem scanner
-│   ├── prompts/                    # Phase 2-3-5: Dynamic prompt generation
-│   │   ├── factory.py              #   PromptFactory — language-aware prompt builder
-│   │   └── templates.py            #   Static template strings
-│   ├── graph/                      # Phase 4: Code graph engine
-│   │   ├── schema.py               #   CodeGraph/CodeNode/CodeEdge data model
-│   │   ├── builder.py              #   AST parser (12 languages) → graph
-│   │   └── retriever.py            #   Graph-enhanced context retrieval
-│   ├── diagnostics/                # Pluggable diagnostic tools
-│   │   ├── registry.py             #   DiagnosticRegistry + DiagnosticTool ABC
-│   │   └── tools.py                #   8 concrete tool implementations
-│   ├── engine/                     # Analysis engines
-│   │   ├── debate.py               #   Generic multi-agent debate engine (v0.5 refactor)
-│   │   ├── diagnostic.py           #   Legacy diagnostic engine (retained)
-│   │   ├── aggregator.py           #   Suggestion deduplication & ranking
-│   │   ├── weight.py               #   Model weight calculation
-│   │   ├── cache.py                #   File + analysis cache
-│   │   └── regression.py           #   Performance regression tracking
-│   ├── agents/                     # Agent orchestration (retained from v0.3)
-│   └── plugins/                    # Plugin system
-│       ├── models/                 #   LLM provider plugins
-│       └── systems/                #   Target system plugins (raft_kv, mysql, redis)
+│   ├── cli.py                      # CLI 入口（typer + rich）
+│   ├── detector/                   # 阶段 1：零 LLM 项目指纹采集
+│   │   ├── fingerprint.py          #   语言/框架/项目类型枚举 + 数据模型
+│   │   └── scanner.py              #   确定性文件系统扫描器
+│   ├── prompts/                    # 阶段 2-3-5：动态 Prompt 生成
+│   │   ├── factory.py              #   PromptFactory — 语言感知的 Prompt 构建器
+│   │   └── templates.py            #   静态模板字符串
+│   ├── graph/                      # 阶段 4：代码图引擎
+│   │   ├── schema.py               #   CodeGraph/CodeNode/CodeEdge 数据模型
+│   │   ├── builder.py              #   12 语言 AST 解析器 → 图构建
+│   │   └── retriever.py            #   图增强上下文检索器
+│   ├── diagnostics/                # 可插拔诊断工具
+│   │   ├── registry.py             #   DiagnosticRegistry + DiagnosticTool 抽象基类
+│   │   └── tools.py                #   8 个具体工具实现
+│   ├── engine/                     # 分析引擎
+│   │   ├── debate.py               #   通用多 Agent 辩论引擎（v0.5 重构）
+│   │   ├── diagnostic.py           #   遗留诊断引擎（保留兼容）
+│   │   ├── aggregator.py           #   建议去重与排序
+│   │   ├── weight.py               #   模型权重计算
+│   │   ├── cache.py                #   文件 + 分析缓存
+│   │   └── regression.py           #   性能回归追踪
+│   ├── agents/                     # Agent 编排（v0.3 保留）
+│   └── plugins/                    # 插件系统
+│       ├── models/                 #   LLM 提供商插件
+│       └── systems/                #   目标系统插件（raft_kv、mysql、redis）
 ├── config/
-│   └── default.yaml                # Default configuration
+│   └── default.yaml                # 默认配置文件
 ├── tests/
-│   ├── test_*.py                   # Unit tests
-│   └── e2e_simulation.py           # Full pipeline mock test
-├── pyproject.toml                  # Build config + entry points
+│   ├── test_*.py                   # 单元测试
+│   └── e2e_simulation.py           # 全流水线模拟测试
+├── pyproject.toml                  # 构建配置 + 入口点
 └── README.md
 ```
 
 ---
 
-## Configuration
+## 配置说明
 
-### Model & API Key Setup
+### 模型与 API Key
 
-SmartBench auto-detects provider and base URL from your model name:
+SmartBench 根据模型名称自动识别提供商和 Base URL：
 
-| You type | Auto-detected |
-|----------|---------------|
+| 你输入 | 自动识别 |
+|--------|----------|
 | `deepseek-chat` | DeepSeek → `https://api.deepseek.com/v1` |
 | `gpt-4o` | OpenAI → `https://api.openai.com/v1` |
 | `claude-sonnet-4` | Anthropic → `https://api.anthropic.com/v1` |
-| `glm-4` | Zhipu GLM → `https://open.bigmodel.cn/api/paas/v4` |
-| `doubao-seed-2.0-pro` | ByteDance Doubao → `https://ark.cn-beijing.volces.com/api/v3` |
-| `moonshot-v1` | Moonshot Kimi → `https://api.moonshot.cn/v1` |
-| `qwen-max` | Alibaba Qwen → `https://dashscope.aliyuncs.com/compatible-mode/v1` |
-| `llama3.1` | Local Ollama → `http://localhost:11434/v1` |
+| `glm-4` | 智谱 GLM → `https://open.bigmodel.cn/api/paas/v4` |
+| `doubao-seed-2.0-pro` | 字节豆包 → `https://ark.cn-beijing.volces.com/api/v3` |
+| `moonshot-v1` | 月之暗面 Kimi → `https://api.moonshot.cn/v1` |
+| `qwen-max` | 阿里通义千问 → `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| `llama3.1` | 本地 Ollama → `http://localhost:11434/v1` |
 
-### Environment Variables (Quick Mode)
+### 环境变量（快速模式）
 
 ```bash
 export DEEPSEEK_API_KEY="sk-your-key"
@@ -257,38 +250,38 @@ export MOONSHOT_API_KEY="your-key"
 export DASHSCOPE_API_KEY="your-key"
 ```
 
-### Configuration File (`config/default.yaml`)
+### 配置文件（`config/default.yaml`）
 
 ```yaml
 systems:
-  raft_kv:                          # Legacy: specific target systems
+  raft_kv:                          # 遗留：特定目标系统配置
     project_path: "/path/to/project"
     benchmark_command: "./bench.sh"
 
-models:                             # Legacy: static model config
+models:                             # 遗留：静态模型配置
   - name: "deepseek"
     provider: "openai_compatible"
     enabled: true
 ```
 
-> **Note**: The `config/default.yaml` is retained for backward compatibility.
-> In v0.5, the interactive CLI wizard is the primary configuration path.
+> **说明**：`config/default.yaml` 保留用于向后兼容。
+> v0.5 中，交互式 CLI 向导是主要的配置方式。
 
 ---
 
-## Extending SmartBench
+## 扩展指南
 
-### Adding a New Language
+### 添加新语言
 
-1. **Detection** — Add extension to `_EXTENSION_MAP` and manifest to `_MANIFEST_MAP` in `detector/scanner.py`
-2. **Code Graph** — Add regex patterns to `_PATTERNS` in `graph/builder.py`
-3. **Guidance** — Add language hints to `_language_specific_guidance()` in `prompts/factory.py`
-4. **Diagnostics** — Create a `DiagnosticTool` subclass in `diagnostics/tools.py`
+1. **检测** — 在 `detector/scanner.py` 的 `_EXTENSION_MAP` 中添加扩展名，在 `_MANIFEST_MAP` 中添加清单文件
+2. **代码图** — 在 `graph/builder.py` 的 `_PATTERNS` 中添加正则表达式
+3. **诊断指导** — 在 `prompts/factory.py` 的 `_language_specific_guidance()` 中添加语言提示
+4. **诊断工具** — 在 `diagnostics/tools.py` 中创建 `DiagnosticTool` 子类
 
-Example — adding Ruby support:
+以 Ruby 为例：
 
 ```python
-# 1. scanner.py — already done: .rb extension + Gemfile manifest
+# 1. scanner.py — 已内置：.rb 扩展名 + Gemfile 清单文件
 # 2. builder.py _PATTERNS:
 Language.RUBY: {
     "function": re.compile(r'def\s+(?P<name>\w+)', re.MULTILINE),
@@ -296,91 +289,88 @@ Language.RUBY: {
     "call": re.compile(r'(?P<name>\w+)\s*\(', re.MULTILINE),
 },
 # 3. factory.py _language_specific_guidance:
-Language.RUBY: "Use ruby-prof / stackprof for profiling\n...",
-# 4. tools.py — add RubyDiagnosticTool(DiagnosticTool): ...
+Language.RUBY: "使用 ruby-prof / stackprof 进行性能分析\n...",
+# 4. tools.py — 添加 RubyDiagnosticTool(DiagnosticTool): ...
 ```
 
-### Adding a New LLM Provider
+### 添加新 LLM 提供商
 
-Add an entry to `PROVIDER_REGISTRY` in `cli.py`:
+在 `cli.py` 的 `PROVIDER_REGISTRY` 中添加一条记录：
 
 ```python
 PROVIDER_REGISTRY = {
-    # ... existing providers ...
-    "newprovider": {
-        "base_url": "https://api.newprovider.com/v1",
-        "patterns": ["newprovider-"],
-        "display": "New Provider",
+    # ... 已有提供商 ...
+    "新提供商": {
+        "base_url": "https://api.新提供商.com/v1",
+        "patterns": ["新提供商模型前缀-"],
+        "display": "新提供商名称",
     },
 }
 ```
 
 ---
 
-## FAQ
+## 常见问题
 
-### Q: Does SmartBench modify my code?
-**No.** SmartBench only analyzes and suggests. It never writes to your project directory.
+### Q: SmartBench 会修改我的代码吗？
+**不会。** SmartBench 只分析和建议，绝不向你的项目目录写入任何内容。
 
-### Q: Do I need to reconfigure API keys every time?
-**Yes, by design.** Keys are stored in memory only. When you close the terminal
-and start a new `smartbench` session, you re-enter your keys. This ensures
-keys are never accidentally persisted to disk.
+### Q: 每次启动都需要重新配置 API Key 吗？
+**是的，设计如此。** API Key 仅存储在内存中。当你关闭终端并启动新的
+`smartbench` 会话时，需要重新输入。这确保密钥不会意外持久化到磁盘。
 
-### Q: What if my project uses multiple languages?
-SmartBench detects the **primary** language by file count and lists secondary
-languages. The code graph and diagnostics focus on the primary language.
-Mixed-language projects get the `mixed` language tag.
+### Q: 如果我的项目使用多种语言怎么办？
+SmartBench 按文件数量检测**主要**语言，同时列出次要语言。
+代码图和诊断聚焦于主要语言。多语言混合项目会标为 `mixed`。
 
-### Q: Can I use a local LLM (Ollama, vLLM)?
-Yes. Use a model name starting with `llama`, `mistral`, `qwen2`, `codellama`,
-or `deepseek-r1` — SmartBench auto-routes to `http://localhost:11434/v1`.
+### Q: 能用本地 LLM 吗（Ollama、vLLM）？
+可以。使用以 `llama`、`mistral`、`qwen2`、`codellama` 或 `deepseek-r1`
+开头的模型名，SmartBench 会自动路由到 `http://localhost:11434/v1`。
 
-### Q: What if my project has no README?
-Phase 1 (deterministic scanning) still works perfectly. Phase 2 (LLM project
-understanding) skips gracefully. The debate engine uses file content + graph
-context instead.
+### Q: 如果项目没有 README 怎么办？
+阶段 1（确定性扫描）依然正常工作。阶段 2（LLM 项目理解）会优雅跳过。
+辩论引擎将使用文件内容 + 代码图上下文替代。
 
-### Q: How is the code graph built without compiling?
-SmartBench uses regex-based heuristic parsing for speed and zero-dependency
-operation. It captures ~85-90% of function/class definitions and call edges.
-For production use, install `tree-sitter` for precise AST parsing:
+### Q: 不编译怎么构建代码图？
+SmartBench 使用基于正则表达式的启发式解析，零额外依赖，速度快。
+可以捕获约 85-90% 的函数/类定义和调用边。
+如需更高精度，可安装 tree-sitter：
 ```bash
 pip install tree-sitter
 ```
 
 ---
 
-## Changelog
+## 更新日志
 
-### v0.5.0 (2026-06-13) — Universal Platform Refactor
+### v0.5.0（2026-06-13）— 通用平台重构
 
-- **New**: `detector/` — 14-language zero-LLM project fingerprinting
-- **New**: `prompts/` — Dynamic PromptFactory, all hardcoded assumptions removed
-- **New**: `graph/` — Code graph engine (12 languages, AST→graph→retrieval)
-- **New**: `diagnostics/` — Pluggable tool registry (8 tools, language-routed)
-- **Refactor**: `engine/debate.py` — Complete rewrite, zero Raft KV references
-- **Refactor**: `cli.py` — 67KB→13KB, three-mode interactive wizard
-- **UX**: Masked API key input with `*` echo and `****abcd` confirmation
-- **UX**: Model-name-driven auto-config (8 providers)
-- **Fix**: 9 bugs from comprehensive self-audit (I/O caching, precedence, type matching, language detection)
+- **新增**：`detector/` — 14 语言零 LLM 项目指纹采集
+- **新增**：`prompts/` — 动态 PromptFactory，消除所有硬编码假设
+- **新增**：`graph/` — 代码图引擎（12 语言，AST→图→检索）
+- **新增**：`diagnostics/` — 可插拔工具注册表（8 工具，按语言路由）
+- **重构**：`engine/debate.py` — 完全重写，零 Raft KV 引用
+- **重构**：`cli.py` — 67KB→13KB，三种交互模式
+- **体验**：API Key 掩码输入，`*` 回显 + `****abcd` 确认
+- **体验**：模型名称驱动自动配置（8 个提供商）
+- **修复**：全面自审查发现的 9 个 Bug（I/O 缓存、运算符优先级、类型匹配、语言检测等）
 
-### v0.4 (2026-04-13)
-- Diagnostic engine: crash, deadlock, memory leak, performance bottleneck detection
-- GDB + flamegraph + Linux diagnostic tools integration
+### v0.4（2026-04-13）
+- 诊断引擎：崩溃、死锁、内存泄漏、性能瓶颈检测
+- GDB + 火焰图 + Linux 诊断工具集成
 
-### v0.3 (2026-04-13)
-- Multi-agent debate engine (Proposer/Critique/Judge)
-- Code cache + performance regression analysis
+### v0.3（2026-04-13）
+- 多 Agent 辩论引擎（Proposer/Critique/Judge）
+- 代码缓存 + 性能回归分析
 
-### v0.2 (2026-04-10)
-- Multi-model collaboration, weight engine, suggestion aggregation
+### v0.2（2026-04-10）
+- 多模型协作、权重引擎、建议聚合去重
 
-### v0.1 (2026-04-08)
-- Initial release: Raft KV benchmark + basic analysis
+### v0.1（2026-04-08）
+- 初始版本：Raft KV 压测 + 基础分析
 
 ---
 
-## License
+## 许可证
 
 MIT
