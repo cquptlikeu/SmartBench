@@ -663,20 +663,31 @@ def configure_api_keys() -> Optional[Dict[str, str]]:
                 console.print(f"    [green]OK[/green] {display}")
 
     # Manual entry
-    console.print(f"\n  [bold]Add models manually:[/bold]")
-    console.print(f"  [dim]Examples: deepseek-chat | gpt-4o | claude-sonnet-4 | glm-4 | doubao-seed-2.0-pro[/dim]")
-    console.print(f"  [dim]Press Enter on model name to finish.[/dim]")
+    console.print(f"\n  [bold]Configure your models:[/bold]")
+    console.print(f"  [dim]One model is enough — debate engine reuses it for all three roles.[/dim]")
+    console.print(f"  [dim]Examples: deepseek-chat | gpt-4o | claude-sonnet-4 | glm-4[/dim]")
+    console.print(f"")
 
     while True:
-        model = Prompt.ask("\n  Model name", default="").strip()
-        if not model:
-            break
+        if models_list:
+            # Already added at least one model — user can stop or add more
+            model = Prompt.ask(
+                f"  Model name ([green]{len(models_list)} configured[/green], Enter to finish)",
+                default="",
+            ).strip()
+            if not model:
+                break
+        else:
+            model = Prompt.ask("  Model name", default="").strip()
+            if not model:
+                console.print("    [yellow]At least one model is required.[/yellow]")
+                continue
 
         provider_key, base_url, display = _detect_provider(model)
 
         # Confirm auto-detection, allow override
-        console.print(f"    [dim]Detected: {display} → {base_url}[/dim]")
-        override = Prompt.ask(f"    Base URL (Enter to confirm, or type custom)", default="").strip()
+        console.print(f"    [dim]Provider: {display} → {base_url}[/dim]")
+        override = Prompt.ask(f"    Base URL (Enter to confirm)", default="").strip()
         if override:
             base_url = override
 
@@ -691,10 +702,14 @@ def configure_api_keys() -> Optional[Dict[str, str]]:
             "api_key": key,
             "base_url": base_url,
         })
-        console.print(f"    [green]OK[/green] {model} ({display})")
+        console.print(f"    [green]OK[/green] {model} ({display}) — {len(models_list)} model(s) total")
 
     if not models_list:
         return None
+
+    console.print(f"\n  [green]Ready![/green] {len(models_list)} model(s) configured.")
+    if len(models_list) == 1:
+        console.print(f"  [dim]The debate Proposer/Critique/Judge will all use {models_list[0]['model']}.[/dim]")
 
     return {"models": models_list}
 
