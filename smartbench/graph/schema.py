@@ -236,6 +236,23 @@ class CodeGraph:
                     results.append(node)
         return results
 
+    def merge(self, other: "CodeGraph") -> "CodeGraph":
+        """Merge another graph into this one (non-destructive, returns new graph).
+
+        Duplicate nodes (same ID) are skipped; all edges from both graphs included.
+        """
+        merged = CodeGraph(meta={**self.meta, "merged_languages": True})
+        for nid, node in self.nodes.items():
+            merged.add_node(node)
+        for edge in self.edges:
+            merged.add_edge(edge)
+        for nid, node in other.nodes.items():
+            if nid not in merged.nodes:
+                merged.add_node(node)
+        for edge in other.edges:
+            merged.add_edge(edge)
+        return merged
+
     def summary(self) -> str:
         """One-line graph summary."""
         n_files = sum(1 for n in self.nodes.values() if n.node_type == NodeType.FILE)

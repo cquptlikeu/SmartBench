@@ -272,16 +272,41 @@ def run_phase1_detection(project_path: str) -> ProjectFingerprint:
 
 
 def run_phase4_graph(project_path: str, fingerprint: ProjectFingerprint):
-    """Phase 4: Build code graph."""
+    """Phase 4: Build code graph — parses primary + secondary languages."""
     try:
-        builder = CodeGraphBuilder(max_files=300)
+        builder = CodeGraphBuilder(max_files=500)
+        all_langs = [fingerprint.primary_language] + fingerprint.secondary_languages
+
+        if len(all_langs) == 1:
+            lang_label = fingerprint.primary_language.value
+        else:
+            lang_label = " + ".join(l.value for l in all_langs)
+
         with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
-            task = progress.add_task(f"Building code graph ({fingerprint.primary_language.value})...", total=None)
-            graph = builder.build(project_path, fingerprint.primary_language)
+            task = progress.add_task(f"构建代码图 ({lang_label})...", total=None)
+
+            main_graph = builder.build(project_path, fingerprint.primary_language)
+
+            # Also parse secondary languages and merge
+            for sec_lang in fingerprint.secondary_languages:
+                sec_graph = builder.build(project_path, sec_lang)
+                if sec_graph and len(sec_graph.nodes) > 0:
+                    main_graph = main_graph.merge(sec_graph)
+
             progress.remove_task(task)
-        return graph
+
+        # Show language breakdown
+        lang_counts = {}
+        for node in main_graph.nodes.values():
+            lang = node.language or "unknown"
+            lang_counts[lang] = lang_counts.get(lang, 0) + 1
+        if len(lang_counts) > 1:
+            breakdown = ", ".join(f"{l}:{c}" for l, c in sorted(lang_counts.items()))
+            console.print(f"    [dim]语言分布: {breakdown}[/dim]")
+
+        return main_graph
     except Exception as e:
-        console.print(f"  [yellow]Graph build issue: {e}[/yellow]")
+        console.print(f"  [yellow]代码图构建问题: {e}[/yellow]")
         return None
 
 
@@ -336,13 +361,14 @@ def run_diagnosis_with_graph(project_path: str, fingerprint: ProjectFingerprint,
     )
 
     # Phase 5: Multi-agent debate
-    console.print("\n[bold]Running multi-agent debate...[/bold]")
+    console.print("\n[bold]多 Agent 辩论中...[/bold]\n")
 
     def llm_fn(prompt: str) -> str:
         return _call_llm(api_config, prompt) or ""
 
     debate_engine = DebateEngine(llm_fn, prompt_factory=factory)
-    result = debate_engine.debate(analysis_context, target=concern)
+    result = debate_engine.debate(analysis_context, target=concern,
+                                  on_progress=_show_debate_round)
 
     _display_diagnosis_results(result, fingerprint, graph)
 
@@ -384,9 +410,73 @@ def run_fallback_analysis(project_path: str, fingerprint: ProjectFingerprint,
         return _call_llm(api_config, prompt) or ""
 
     debate_engine = DebateEngine(llm_fn, prompt_factory=factory)
-    result = debate_engine.debate(analysis_context, target=concern)
+    result = debate_engine.debate(analysis_context, target=concern,
+                                  on_progress=_show_debate_round)
 
     _display_diagnosis_results(result, fingerprint, None)
+
+
+def _show_debate_round(role: str, parsed_json: Optional[Dict], raw_text: str):
+    """辩论每轮结束后调用 — 用 Rich Panel 显示 LLM 产出。"""
+    role_names = {
+        "proposer": ("Proposer（方案提出者）", "cyan"),
+        "critique": ("Critique（交叉审查者）", "yellow"),
+        "judge": ("Judge（最终仲裁者）", "green"),
+    }
+    display_name, color = role_names.get(role, (role, "white"))
+
+    if not parsed_json:
+        console.print(Panel(
+            f"[red]解析失败[/red]\n[dim]{raw_text[:300] if raw_text else '(无输出)'}[/dim]",
+            title=f"[{color}]{display_name}[/{color}]",
+            border_style=color,
+        ))
+        return
+
+    if role == "proposer":
+        analysis = parsed_json.get("analysis", {})
+        proposals = parsed_json.get("proposals", [])
+        body = f"[bold]根因分析：[/bold]{analysis.get('root_cause', 'N/A')}\n"
+        body += f"[bold]影响评估：[/bold]{analysis.get('impact_assessment', 'N/A')}\n\n"
+        for i, p in enumerate(proposals[:5], 1):
+            body += f"[bold]#{i} {p.get('title', '无标题')}[/bold] [{p.get('risk_level', '?')}风险]\n"
+            body += f"  {p.get('problem', '')[:120]}\n"
+            body += f"  [dim]位置: {p.get('location', '?')}[/dim]\n"
+        console.print(Panel(body.strip(), title=f"[{color}]{display_name}[/{color}] "
+                           f"（{len(proposals)} 条方案）", border_style=color))
+
+    elif role == "critique":
+        verdicts = parsed_json.get("verdicts", [])
+        assessment = parsed_json.get("overall_assessment", "")
+        body = ""
+        for v in verdicts:
+            icon = {"accept": "[接受]", "modify": "[需修改]", "reject": "[拒绝]"}.get(
+                v.get("verdict", ""), "[?]")
+            body += f"{icon} [bold]{v.get('proposal_title', '?')}[/bold]\n"
+            for concern in v.get("concerns", []):
+                body += f"   └ {concern}\n"
+            if v.get("suggested_modifications"):
+                body += f"   [dim]建议: {v['suggested_modifications']}[/dim]\n"
+        if assessment:
+            body += f"\n[dim]{assessment}[/dim]"
+        console.print(Panel(body.strip(), title=f"[{color}]{display_name}[/{color}]",
+                           border_style=color))
+
+    elif role == "judge":
+        decision = parsed_json.get("decision", "?")
+        reasoning = parsed_json.get("reasoning", "")
+        final = parsed_json.get("final_suggestions", [])
+        risk = parsed_json.get("risk_summary", "")
+        body = f"[bold]决策：[/bold]{decision}\n"
+        body += f"[bold]理由：[/bold]{reasoning}\n"
+        body += f"[bold]最终建议：[/bold]{len(final)} 条\n\n"
+        for i, s in enumerate(final[:5], 1):
+            prio = s.get("priority", 3)
+            body += f"[bold]#{i} {s.get('title', '?')}[/bold] [优先级:{prio}] [共识:{s.get('consensus', '?')}]\n"
+        if risk:
+            body += f"\n[bold red][!] 顶层风险：[/bold red]{risk}"
+        console.print(Panel(body.strip(), title=f"[{color}]{display_name}[/{color}] "
+                           f"（最终报告）", border_style=color))
 
 
 # ═══════════════════════════════════════════════════════════════════════

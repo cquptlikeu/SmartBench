@@ -82,6 +82,7 @@ class DebateEngine:
         analysis_context: str,
         target: str = "Identify and fix the most impactful issues",
         model_name: str = "default",
+        on_progress: callable = None,
     ) -> DebateResult:
         """
         Run a full debate cycle.
@@ -90,6 +91,7 @@ class DebateEngine:
             analysis_context: Built by PromptFactory.build_analysis_context()
             target: What we're trying to achieve
             model_name: Name of the model being used (for logging)
+            on_progress: Optional callback(role, parsed_json, raw_text) after each round
 
         Returns:
             DebateResult with final suggestions
@@ -111,6 +113,8 @@ class DebateEngine:
         total_chars += len(proposer_prompt) + len(proposer_raw or "")
         log.append({"role": "proposer", "input": proposer_prompt[:500],
                      "output": proposer_raw[:500] if proposer_raw else ""})
+        if on_progress:
+            on_progress("proposer", proposer_json, proposer_raw)
 
         if not proposer_json:
             return DebateResult(
@@ -130,6 +134,8 @@ class DebateEngine:
         total_chars += len(critique_prompt) + len(critique_raw or "")
         log.append({"role": "critique", "input": critique_prompt[:500],
                      "output": critique_raw[:500] if critique_raw else ""})
+        if on_progress:
+            on_progress("critique", critique_json, critique_raw)
 
         # ── Round 3: Judge ────────────────────────────────────────────
         judge_prompt = self.factory.build_judge_prompt(
@@ -142,6 +148,8 @@ class DebateEngine:
         total_chars += len(judge_prompt) + len(judge_raw or "")
         log.append({"role": "judge", "input": judge_prompt[:500],
                      "output": judge_raw[:500] if judge_raw else ""})
+        if on_progress:
+            on_progress("judge", judge_json, judge_raw)
 
         # ── Extract final suggestions ──────────────────────────────────
         final_suggestions = []
