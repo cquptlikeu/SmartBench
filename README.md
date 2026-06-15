@@ -42,7 +42,7 @@ $ smartbench
 
 ## 演示视频
 
-<video src="https://xianyu-sheng.github.io/SmartBench/%E4%BD%BF%E7%94%A8%E8%A7%86%E9%A2%91_720p.mp4" controls width="100%"></video>
+<video src="https://xianyu-sheng.github.io/SmartBench/demo.mp4" controls width="100%"></video>
 
 ---
 
