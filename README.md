@@ -42,9 +42,9 @@ $ smartbench
 
 ## 演示视频
 
-📺 **[观看 SmartBench 使用演示视频](./%E4%BD%BF%E7%94%A8%E8%A7%86%E9%A2%91.mp4)**
+<video src="https://media.githubusercontent.com/media/xianyu-sheng/SmartBench/main/%E4%BD%BF%E7%94%A8%E8%A7%86%E9%A2%91.mp4" controls width="100%"></video>
 
-> 点击上方链接即可在 GitHub 内置播放器中观看完整演示，涵盖项目安装、配置向导、诊断流程全步骤。
+> 如果视频无法加载，[点击这里直接打开](./%E4%BD%BF%E7%94%A8%E8%A7%86%E9%A2%91.mp4)
 
 ---
 
