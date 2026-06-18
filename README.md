@@ -7,6 +7,24 @@
 
 ---
 
+## 📺 演示视频
+
+<div align="center">
+
+[![🎬 观看演示视频](https://img.shields.io/badge/🎬-观看演示视频-ff6600?style=for-the-badge&logo=vimeo&logoColor=white&labelColor=333333)](https://xianyu-sheng.github.io/SmartBench/demo.mp4)
+
+**👆 点击上方按钮观看 SmartBench 完整操作演示**
+
+</div>
+
+<video src="https://xianyu-sheng.github.io/SmartBench/demo.mp4" controls width="100%">
+  您的浏览器不支持视频播放，请<a href="https://xianyu-sheng.github.io/SmartBench/demo.mp4">点击下载观看</a>
+</video>
+
+> 💡 视频托管于 GitHub Pages，也可直接访问：https://xianyu-sheng.github.io/SmartBench/demo.mp4
+
+---
+
 ## 项目简介
 
 SmartBench 是一款**通用代码智能诊断平台**。它利用 LLM 驱动的多 Agent 辩论引擎，
@@ -37,12 +55,6 @@ $ smartbench
       Proposer → [Verifier 事实核查] → Critique → [Verifier 交叉核查] → Judge
       每条提案必须附证据声明，自动验证文件:行号是否存在，拦截 LLM 幻觉。
 ```
-
----
-
-## 演示视频
-
-<video src="https://xianyu-sheng.github.io/SmartBench/demo.mp4" controls width="100%"></video>
 
 ---
 
